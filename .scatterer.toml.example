@@ -1,0 +1,12 @@
+[layout]
+# Tab 1, left pane
+agent = "pi"
+
+# Tab 1, right pane
+hunk = "hunk"
+
+# Tab 2
+runner = "process-compose up"
+
+# Tab 3
+git = "lazygit"

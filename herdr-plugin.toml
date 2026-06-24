@@ -1,0 +1,30 @@
+id = "daniel.scatterer"
+name = "Scatterer"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Daniel's Herdr workflow/layout plugin."
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["bash", "scripts/build.sh", "--release"]
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "apply-layout"
+title = "Apply Scatterer layout"
+description = "Create a new workspace with the default three-tab Scatterer layout."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "apply-layout"]
+
+[[actions]]
+id = "quick-start"
+title = "Quick start Pi worktree"
+description = "Prompt for a task, create a worktree, apply the Scatterer layout, and start Pi."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
+
+[[panes]]
+id = "quick-start"
+title = "Quick start"
+placement = "overlay"
+command = ["bash", "scripts/scatterer.sh", "quick-start"]
