@@ -4,16 +4,6 @@ set -euo pipefail
 root="${HERDR_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$root"
 
-# Nix-provided Rust on macOS may need an explicit libiconv path when this
-# launcher falls back to `cargo run` during development.
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  iconv_lib="$(find /nix/store -maxdepth 3 -path '*/lib/libiconv.dylib' -print 2>/dev/null | sort | tail -n 1 || true)"
-  if [[ -n "$iconv_lib" ]]; then
-    iconv_dir="$(dirname "$iconv_lib")"
-    export LIBRARY_PATH="$iconv_dir${LIBRARY_PATH:+:$LIBRARY_PATH}"
-  fi
-fi
-
 binary_is_fresh() {
   local binary="$1"
   [[ -x "$binary" ]] || return 1

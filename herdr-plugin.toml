@@ -6,7 +6,7 @@ description = "Daniel's Herdr workflow/layout plugin."
 platforms = ["macos", "linux"]
 
 [[build]]
-command = ["bash", "scripts/build.sh", "--release"]
+command = ["cargo", "build", "--release"]
 platforms = ["macos", "linux"]
 
 [[actions]]
@@ -23,8 +23,21 @@ description = "Prompt for a task, create a worktree, apply the Scatterer layout,
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
 
+[[actions]]
+id = "pr-picker"
+title = "PR picker"
+description = "Show PRs associated with active Herdr agents and focus their workspaces."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "open-pr-picker"]
+
 [[panes]]
 id = "quick-start"
 title = "Quick start"
 placement = "overlay"
 command = ["bash", "scripts/scatterer.sh", "quick-start"]
+
+[[panes]]
+id = "pr-picker"
+title = "PRs"
+placement = "overlay"
+command = ["bash", "scripts/scatterer.sh", "pr-picker"]
