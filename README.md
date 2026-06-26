@@ -22,13 +22,15 @@ Enter a prompt, optionally enter a branch name, choose a Pi model from
 `pi --list-models`, and submit. Scatterer then:
 
 1. creates a Git worktree from the current repo
-2. runs project worktree setup from `.herdr/setup.json` plus executable
-   `.herdr/setup-worktree.sh` / `.herdr/post-worktree-create.sh` hooks when present
+2. runs project worktree setup from merged Scatterer config, `.herdr/setup.json`,
+   and executable `.herdr/setup-worktree.sh` / `.herdr/post-worktree-create.sh`
+   hooks when present
 3. applies the same three-tab layout in the new worktree workspace
 4. starts Pi in the `agent` tab with the entered prompt as Pi's initial message
 
 Layout pane commands import `direnv export bash` before starting so tools like Pi,
 hunk, `process-compose`, and lazygit inherit the worktree's allowed `.envrc`.
+Set `[env] direnv = false` in Scatterer config to disable that per project.
 
 Pi supports this directly via its CLI: `pi [messages...]` starts interactive Pi
 with an initial prompt. Scatterer currently runs:
@@ -96,22 +98,64 @@ With Daniel's current `prefix = "ctrl+x"`, these are `ctrl+x` then `shift+s`
 for layout, `ctrl+x` then `shift+a` for quick start, and `ctrl+x` then
 `shift+r` for PR picker.
 
-## Per-project runner/commands
+## Per-project configuration
 
-Put `.scatterer.toml` or `scatterer.toml` in a project directory to override the
-commands used by the layout:
+Scatterer merges configuration files from parent directories down to the current
+project directory. In each directory it loads files in this order:
+
+1. `scatterer.toml`
+2. `.scatterer.toml`
+3. `.scatterer.local.toml`
+
+Use `.scatterer.toml` for project config you are comfortable committing. Use
+`.scatterer.local.toml` for personal machine-local overrides and add it to
+`.git/info/exclude` or your global git ignore.
 
 ```toml
+[env]
+# Defaults to true. When enabled, Scatterer-created panes run
+# `direnv export bash` before launching pi/hunk/runner/lazygit.
+direnv = true
+
 [layout]
 agent = "pi"
 hunk = "hunk"
 runner = "process-compose up"
 git = "lazygit"
+
+[quick_start.setup]
+# Shell commands run in each new quick-start worktree before the layout is
+# applied. Commands from multiple config files are appended in merge order.
+commands = [
+  "touch .lorri-off",
+  "direnv allow",
+]
 ```
 
-`runner` is the main one you'll normally customize per project, for example:
+`runner` is the main layout command you'll normally customize per project, for
+example:
 
 ```toml
 [layout]
 runner = "npm run dev"
+```
+
+Quick-start also supports executable setup hooks alongside config commands:
+
+```txt
+.herdr/setup.json
+.herdr/setup-worktree.sh
+.herdr/post-worktree-create.sh
+```
+
+These can be local-only too. For personal Cobb-style setup, keep the files in
+your checkout and ignore them locally:
+
+```sh
+cat >> .git/info/exclude <<'EOF'
+.scatterer.local.toml
+.herdr/setup.json
+.herdr/setup-worktree.sh
+.herdr/post-worktree-create.sh
+EOF
 ```
