@@ -117,25 +117,19 @@ fn handle_quick_start_key(
 
     match key.code {
         KeyCode::Esc => Ok(Some(None)),
-        KeyCode::Enter if app.field == QuickField::Prompt => {
+        KeyCode::Enter
+            if app.field == QuickField::Prompt && key.modifiers.contains(KeyModifiers::SHIFT) =>
+        {
             app.insert_char('\n');
             Ok(None)
         }
         KeyCode::Enter => Ok(app.to_form().map(Some)),
-        KeyCode::Tab => {
+        KeyCode::Tab | KeyCode::Down => {
             app.next_field();
             Ok(None)
         }
-        KeyCode::BackTab => {
+        KeyCode::BackTab | KeyCode::Up => {
             app.previous_field();
-            Ok(None)
-        }
-        KeyCode::Down if app.field == QuickField::Prompt => {
-            app.scroll_prompt_down(1);
-            Ok(None)
-        }
-        KeyCode::Up if app.field == QuickField::Prompt => {
-            app.scroll_prompt_up(1);
             Ok(None)
         }
         KeyCode::PageDown if app.field == QuickField::Prompt => {
@@ -144,14 +138,6 @@ fn handle_quick_start_key(
         }
         KeyCode::PageUp if app.field == QuickField::Prompt => {
             app.scroll_prompt_up(PROMPT_PAGE_SCROLL);
-            Ok(None)
-        }
-        KeyCode::Down => {
-            app.next_field();
-            Ok(None)
-        }
-        KeyCode::Up => {
-            app.previous_field();
             Ok(None)
         }
         KeyCode::Backspace => {
@@ -321,7 +307,7 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         frame,
         chunks[0],
         prompt_title(prompt_scroll, prompt_max_scroll),
-        "What should Pi do? Enter adds a new line.",
+        "What should Pi do? Shift+Enter adds a new line.",
         &app.prompt,
         app.field == QuickField::Prompt,
         prompt_scroll,
@@ -359,9 +345,7 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )])
     } else {
-        Line::from(
-            "Ctrl+S submit · Enter newline in prompt / submit elsewhere · Tab fields · ↑/↓ scroll",
-        )
+        Line::from("Enter submit · Shift+Enter newline · Tab/↑/↓ fields · PgUp/PgDn scroll prompt")
     };
     frame.render_widget(
         Paragraph::new(footer_text).wrap(Wrap { trim: false }),
