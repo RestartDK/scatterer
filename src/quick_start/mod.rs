@@ -66,7 +66,7 @@ pub(crate) fn run() -> Result<()> {
     let branch = worktree::branch_for_form(&form);
     let created = worktree::create_worktree(&socket_path, &source.cwd, &branch, &form.prompt)?;
     run_worktree_setup(&source.cwd, &created.path, &config)?;
-    let pi_command = pi::pi_prompt_command(&form);
+    let pi_command = pi::pi_prompt_command(&form, &branch);
 
     apply_scatterer_layout(
         &socket_path,

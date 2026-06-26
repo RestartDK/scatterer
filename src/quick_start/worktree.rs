@@ -4,7 +4,6 @@ use crate::util::{first_string, slugify};
 use anyhow::{Context, Result, anyhow};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug)]
 pub(super) struct CreatedWorktree {
@@ -20,7 +19,7 @@ pub(super) fn create_worktree(
     prompt: &str,
 ) -> Result<CreatedWorktree> {
     let cwd_string = cwd.to_string_lossy().to_string();
-    let label = quick_start_name(prompt);
+    let label = workspace_label(branch, prompt);
     let result = socket_call(
         socket_path,
         "worktree.create",
@@ -74,10 +73,44 @@ pub(super) fn branch_for_form(form: &QuickStartForm) -> String {
         return branch.to_string();
     }
 
-    let slug = slugify(&form.prompt, 48);
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default();
-    format!("quick/{slug}-{seconds}")
+    default_branch_for_prompt(&form.prompt)
+}
+
+pub(super) fn default_branch_for_prompt(prompt: &str) -> String {
+    let slug = slugify(prompt, 48);
+    format!("daniel/{slug}")
+}
+
+fn workspace_label(branch: &str, prompt: &str) -> String {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        quick_start_name(prompt)
+    } else {
+        branch.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quick_start::Harness;
+
+    #[test]
+    fn default_branch_uses_daniel_prompt_slug() {
+        assert_eq!(
+            default_branch_for_prompt("Start the Linear issue\nwith tests"),
+            "daniel/start-the-linear-issue-with-tests"
+        );
+    }
+
+    #[test]
+    fn explicit_branch_wins() {
+        let form = QuickStartForm {
+            prompt: "anything".to_string(),
+            branch: "feature/custom".to_string(),
+            harness: Harness::Pi,
+            model: None,
+        };
+        assert_eq!(branch_for_form(&form), "feature/custom");
+    }
 }

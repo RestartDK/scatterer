@@ -2,8 +2,8 @@ use super::{QuickStartForm, quick_start_name};
 use crate::util::shell_quote;
 use std::process::{Command, Stdio};
 
-pub(super) fn pi_prompt_command(form: &QuickStartForm) -> String {
-    let name = quick_start_name(&form.prompt);
+pub(super) fn pi_prompt_command(form: &QuickStartForm, branch: &str) -> String {
+    let name = pi_session_name(form, branch);
     let mut command = format!(
         "if command -v pi >/dev/null 2>&1; then pi --name {}",
         shell_quote(&name),
@@ -16,6 +16,15 @@ pub(super) fn pi_prompt_command(form: &QuickStartForm) -> String {
     command.push_str(&shell_quote(&form.prompt));
     command.push_str("; else echo 'pi not found on PATH'; fi");
     command
+}
+
+fn pi_session_name(form: &QuickStartForm, branch: &str) -> String {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        quick_start_name(&form.prompt)
+    } else {
+        branch.to_string()
+    }
 }
 
 pub(super) fn available_pi_models() -> Vec<String> {

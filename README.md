@@ -17,9 +17,11 @@ the workspace you invoked it from.
 
 ## Quick start
 
-The `daniel.scatterer.quick-start` action opens a compact Herdr overlay TUI.
-Enter a prompt, optionally enter a branch name, choose a Pi model from
-`pi --list-models`, and submit. Scatterer then:
+The `daniel.scatterer.quick-start` action opens a Herdr overlay TUI. Enter a
+multi-line prompt, optionally enter a branch name, choose a Pi model from
+`pi --list-models`, and submit with `Ctrl+S`. If the branch is empty, Scatterer
+uses `daniel/<prompt-slug>`. The branch name is also used as the worktree
+workspace name and Pi session name. Scatterer then:
 
 1. creates a Git worktree from the current repo
 2. runs project worktree setup from merged Scatterer config, `.herdr/setup.json`,
@@ -30,13 +32,17 @@ Enter a prompt, optionally enter a branch name, choose a Pi model from
 
 Layout pane commands import `direnv export bash` before starting so tools like Pi,
 hunk, `process-compose`, and lazygit inherit the worktree's allowed `.envrc`.
-Set `[env] direnv = false` in Scatterer config to disable that per project.
+If lorri has not finished evaluating yet, Scatterer waits and retries briefly
+before launching panes. If direnv still fails, Scatterer continues without that
+environment and disables direnv hooks in the fallback shell so the same `.envrc`
+error does not repeat. Set `[env] direnv = false` in Scatterer config to disable
+direnv per project.
 
 Pi supports this directly via its CLI: `pi [messages...]` starts interactive Pi
 with an initial prompt. Scatterer currently runs:
 
 ```sh
-pi --name "quick <prompt-slug>" [--model "provider/model"] "<prompt>"
+pi --name "<branch>" [--model "provider/model"] "<prompt>"
 ```
 
 ## PR picker
@@ -140,13 +146,19 @@ example:
 runner = "npm run dev"
 ```
 
-Quick-start also supports executable setup hooks alongside config commands:
+Quick-start also supports setup files and executable hooks alongside config
+commands:
 
 ```txt
 .herdr/setup.json
 .herdr/setup-worktree.sh
 .herdr/post-worktree-create.sh
 ```
+
+Scatterer checks both the source checkout and the newly-created worktree, so
+local-only setup in your source checkout still runs even when the worktree has a
+tracked `.herdr` directory. Identical tracked files are skipped to avoid running
+the same setup twice.
 
 These can be local-only too. For personal Cobb-style setup, keep the files in
 your checkout and ignore them locally:

@@ -1,4 +1,5 @@
 use crate::config::{ProjectConfig, load_project_config};
+use crate::git::git_branch;
 use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
 use crate::pane_env;
 use crate::util::first_string;
@@ -148,11 +149,13 @@ fn create_workspace(socket_path: &Path, cwd: &Path) -> Result<CreatedWorkspace> 
 }
 
 fn workspace_label(cwd: &Path) -> String {
-    let name = cwd
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or("workspace");
+    let name = git_branch(cwd).unwrap_or_else(|| {
+        cwd.file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("workspace")
+            .to_string()
+    });
     format!("{name} · scatterer")
 }
 
