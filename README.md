@@ -53,15 +53,15 @@ lists PRs attached to active Herdr agents. It scans active agents, finds their
 current worktree/branch, resolves the matching GitHub PR with `gh`, and shows:
 
 - Nerd Font PR state icon: open, draft, merged, or closed
-- PR number, title, review decision, CI state, and comment count
-- associated agent, agent status, and branch
+- PR number, title, review decision, CI state, comments, files, and lines changed
+- selected-PR details with associated agent, agent status, branch, and URL
 
 Controls:
 
 ```txt
 ↑/↓ or j/k   select
 Enter        focus the associated workspace/agent
-o            open PR in browser
+o            open PR in browser, or copy the URL via terminal clipboard over SSH
 r            refresh
 y            copy PR URL
 q/Esc        close
