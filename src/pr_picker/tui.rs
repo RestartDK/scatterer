@@ -1,9 +1,9 @@
 use super::agents::load_pr_rows;
-use super::github::open_pr_in_browser;
+use super::github::{OpenPrOutcome, open_pr_in_browser};
 use super::{CheckState, PrRow, PrState};
 use crate::focus::focus_pane_later;
 use crate::herdr::herdr_socket_path;
-use crate::util::{command_exists, debug_log};
+use crate::util::{command_exists, copy_to_terminal_clipboard, debug_log, is_ssh_session};
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -16,7 +16,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
@@ -26,7 +26,52 @@ use std::time::Duration;
 struct PrPickerApp {
     rows: Vec<PrRow>,
     selected: usize,
+    scroll: usize,
     status: Option<String>,
+}
+
+impl PrPickerApp {
+    fn selected_row(&self) -> Option<&PrRow> {
+        self.rows.get(self.selected)
+    }
+
+    fn select_previous(&mut self) {
+        if !self.rows.is_empty() {
+            self.selected = self.selected.saturating_sub(1);
+        }
+    }
+
+    fn select_next(&mut self) {
+        if !self.rows.is_empty() {
+            self.selected = (self.selected + 1).min(self.rows.len() - 1);
+        }
+    }
+
+    fn clamp_selection(&mut self) {
+        if self.rows.is_empty() {
+            self.selected = 0;
+            self.scroll = 0;
+        } else {
+            self.selected = self.selected.min(self.rows.len() - 1);
+        }
+    }
+
+    fn ensure_selection_visible(&mut self, visible_rows: usize) {
+        if visible_rows == 0 || self.rows.is_empty() {
+            self.scroll = 0;
+            return;
+        }
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        }
+        let last_visible = self.scroll.saturating_add(visible_rows).saturating_sub(1);
+        if self.selected > last_visible {
+            self.scroll = self.selected.saturating_add(1).saturating_sub(visible_rows);
+        }
+        self.scroll = self
+            .scroll
+            .min(self.rows.len().saturating_sub(visible_rows));
+    }
 }
 
 #[derive(Debug)]
@@ -78,12 +123,13 @@ fn run_pr_picker_loop(
     let mut app = PrPickerApp {
         rows,
         selected: 0,
+        scroll: 0,
         status,
     };
 
     loop {
         terminal
-            .draw(|frame| draw_pr_picker(frame, &app))
+            .draw(|frame| draw_pr_picker(frame, &mut app))
             .context("failed to draw PR picker UI")?;
 
         if !event::poll(Duration::from_millis(250)).context("failed to poll terminal event")? {
@@ -95,16 +141,8 @@ fn run_pr_picker_loop(
                 debug_log(&format!("pr picker key={:?}", key.code));
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if !app.rows.is_empty() {
-                            app.selected = app.selected.saturating_sub(1);
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if !app.rows.is_empty() {
-                            app.selected = (app.selected + 1).min(app.rows.len() - 1);
-                        }
-                    }
+                    KeyCode::Up | KeyCode::Char('k') => app.select_previous(),
+                    KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                     KeyCode::Enter => {
                         if let Some(row) = app.rows.get(app.selected).cloned() {
                             debug_log(&format!(
@@ -117,27 +155,34 @@ fn run_pr_picker_loop(
                         }
                     }
                     KeyCode::Char('o') => {
-                        if let Some(row) = app.rows.get(app.selected) {
-                            open_pr_in_browser(&row.url);
-                            app.status = Some(format!("opened #{}", row.number));
+                        if let Some(row) = app.selected_row() {
+                            let number = row.number;
+                            app.status = match open_pr_in_browser(&row.url) {
+                                Ok(OpenPrOutcome::Opened) => Some(format!("opened #{number}")),
+                                Ok(OpenPrOutcome::CopiedToTerminalClipboard) => Some(format!(
+                                    "copied #{number} URL to the local terminal clipboard"
+                                )),
+                                Err(err) => Some(format!("open failed for #{number}: {err}")),
+                            };
                         }
                     }
                     KeyCode::Char('y') => {
-                        if let Some(row) = app.rows.get(app.selected) {
+                        if let Some(row) = app.selected_row() {
+                            let number = row.number;
                             app.status = match copy_to_clipboard(&row.url) {
-                                Ok(()) => Some(format!("copied #{} URL", row.number)),
-                                Err(err) => Some(format!("copy failed: {err}")),
+                                Ok(()) => Some(format!("copied #{number} URL")),
+                                Err(err) => Some(format!("copy failed for #{number}: {err}")),
                             };
                         }
                     }
                     KeyCode::Char('r') => match load_pr_rows(&socket_path) {
                         Ok(rows) => {
                             app.rows = rows;
-                            app.selected = app.selected.min(app.rows.len().saturating_sub(1));
+                            app.clamp_selection();
                             app.status = if app.rows.is_empty() {
                                 Some("No PRs found for active Herdr agents".to_string())
                             } else {
-                                Some("refreshed".to_string())
+                                Some(format!("refreshed {} PRs", app.rows.len()))
                             };
                         }
                         Err(err) => app.status = Some(format!("refresh failed: {err}")),
@@ -150,94 +195,252 @@ fn run_pr_picker_loop(
     }
 }
 
-fn draw_pr_picker(frame: &mut Frame<'_>, app: &PrPickerApp) {
-    let height = (app.rows.len() as u16)
-        .saturating_mul(2)
-        .saturating_add(4)
-        .clamp(8, 22);
-    let area = centered_rect(frame.area(), 112, height);
+fn draw_pr_picker(frame: &mut Frame<'_>, app: &mut PrPickerApp) {
+    let height = (app.rows.len() as u16).saturating_add(12).clamp(17, 30);
+    let area = centered_rect(frame.area(), 122, height);
     frame.render_widget(Clear, area);
     frame.render_widget(Block::default().borders(Borders::ALL), area);
 
-    let inner = Layout::default()
+    let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([Constraint::Min(2), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(4),
+            Constraint::Length(8),
+            Constraint::Length(1),
+        ])
         .split(area);
 
-    let lines = if app.rows.is_empty() {
-        vec![Line::from(Span::styled(
-            app.status
-                .as_deref()
-                .unwrap_or("No PRs found for active Herdr agents"),
-            Style::default().fg(Color::DarkGray),
-        ))]
+    render_header(frame, chunks[0], app);
+    render_list(frame, chunks[1], app);
+    render_details(frame, chunks[2], app);
+    render_footer(frame, chunks[3]);
+}
+
+fn render_header(frame: &mut Frame<'_>, area: Rect, app: &PrPickerApp) {
+    let selected = if app.rows.is_empty() {
+        "0/0".to_string()
     } else {
-        let mut lines = Vec::new();
-        for (index, row) in app.rows.iter().enumerate() {
-            let selected = index == app.selected;
-            lines.push(pr_row_main_line(row, selected));
-            lines.push(pr_row_detail_line(row, selected));
-        }
-        lines
+        format!("{}/{}", app.selected + 1, app.rows.len())
     };
-
-    frame.render_widget(Paragraph::new(lines), inner[0]);
-
-    let controls = "↑/↓ j/k select · Enter focus · o open · r refresh · y copy URL · q/Esc close";
-    let footer = if let Some(status) = app.status.as_deref() {
-        format!("{status} · {controls}")
+    let ssh_hint = if is_ssh_session() {
+        " · SSH: open copies URL locally"
     } else {
-        controls.to_string()
+        ""
+    };
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(
+                "Pull requests",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  {selected}{ssh_hint}"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
+        Line::from(Span::styled(
+            "Active Herdr agents, sorted by PR state. Enter focuses the agent.",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn render_list(frame: &mut Frame<'_>, area: Rect, app: &mut PrPickerApp) {
+    if app.rows.is_empty() {
+        let message = app
+            .status
+            .as_deref()
+            .unwrap_or("No PRs found for active Herdr agents");
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                message,
+                Style::default().fg(Color::DarkGray),
+            )))
+            .block(Block::default().title("PRs").borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
+
+    let visible_rows = usize::from(area.height.saturating_sub(2).max(1));
+    app.ensure_selection_visible(visible_rows);
+    let end = app.rows.len().min(app.scroll.saturating_add(visible_rows));
+    let mut lines = Vec::new();
+    for (index, row) in app.rows[app.scroll..end].iter().enumerate() {
+        let absolute_index = app.scroll + index;
+        lines.push(pr_row_line(
+            row,
+            absolute_index == app.selected,
+            area.width.saturating_sub(2),
+        ));
+    }
+
+    let title = if app.rows.len() > visible_rows {
+        format!("PRs {}-{} of {}", app.scroll + 1, end, app.rows.len())
+    } else {
+        "PRs".to_string()
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            footer,
-            Style::default().fg(Color::DarkGray),
-        ))),
-        inner[1],
+        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
+        area,
     );
 }
 
-fn pr_row_main_line(row: &PrRow, selected: bool) -> Line<'static> {
-    let base = if selected {
-        Style::default().bg(Color::DarkGray).fg(Color::White)
+fn render_details(frame: &mut Frame<'_>, area: Rect, app: &PrPickerApp) {
+    let lines = if let Some(row) = app.selected_row() {
+        selected_detail_lines(row, app.status.as_deref(), area.width.saturating_sub(2))
     } else {
-        Style::default()
+        vec![Line::from(Span::styled(
+            app.status.as_deref().unwrap_or("Nothing selected"),
+            Style::default().fg(Color::DarkGray),
+        ))]
     };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().title("Details").borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn render_footer(frame: &mut Frame<'_>, area: Rect) {
+    let controls =
+        "↑/↓ j/k select · Enter focus · o open/copy URL · y copy URL · r refresh · q/Esc close";
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            controls,
+            Style::default().fg(Color::DarkGray),
+        ))),
+        area,
+    );
+}
+
+fn pr_row_line(row: &PrRow, selected: bool, max_width: u16) -> Line<'static> {
+    let base = row_style(selected);
     let state_style = base.fg(pr_state_color(row.state));
     let check_style = base.fg(check_state_color(row.checks));
-    let review = row.review.as_deref().unwrap_or("-");
+    let review = review_label(row.review.as_deref());
+    let total_changed = row.additions + row.deletions;
+    let title_width = usize::from(max_width).saturating_sub(76).max(18);
+
     Line::from(vec![
-        Span::styled(format!("{} ", pr_state_icon(row.state)), state_style),
+        Span::styled(if selected { "› " } else { "  " }, base),
         Span::styled(
             format!("#{:<5}", row.number),
             base.add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" {:<6} ", pr_state_label(row.state)), state_style),
-        Span::styled(format!("{} ci ", check_state_icon(row.checks)), check_style),
         Span::styled(
-            format!("{} {:<2} ", COMMENT_ICON, row.comments),
+            format!(
+                "{} {:<7}",
+                pr_state_icon(row.state),
+                pr_state_label(row.state)
+            ),
+            state_style,
+        ),
+        Span::styled(
+            format!(
+                "{} {:<8}",
+                check_state_icon(row.checks),
+                check_state_label(row.checks)
+            ),
+            check_style,
+        ),
+        Span::styled(format!("Δ{:<5}", total_changed), base.fg(Color::Yellow)),
+        Span::styled(format!("+{} ", row.additions), base.fg(Color::Green)),
+        Span::styled(format!("-{} ", row.deletions), base.fg(Color::Red)),
+        Span::styled(format!("{}f ", row.changed_files), base.fg(Color::Gray)),
+        Span::styled(
+            format!("{}{} ", COMMENT_ICON, row.comments),
             base.fg(Color::Cyan),
         ),
-        Span::styled(format!("{:<14}", review), base.fg(review_color(review))),
-        Span::styled(truncate(&row.title, 56), base),
+        Span::styled(format!("{:<9}", review), base.fg(review_color(review))),
+        Span::styled(truncate(&row.title, title_width), base),
     ])
 }
 
-fn pr_row_detail_line(row: &PrRow, selected: bool) -> Line<'static> {
-    let style = if selected {
-        Style::default().bg(Color::DarkGray).fg(Color::Gray)
+fn selected_detail_lines(row: &PrRow, status: Option<&str>, max_width: u16) -> Vec<Line<'static>> {
+    let total_changed = row.additions + row.deletions;
+    let title_width = usize::from(max_width).saturating_sub(8).max(20);
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("#{} ", row.number),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                truncate(&row.title, title_width),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                pr_state_label(row.state),
+                Style::default().fg(pr_state_color(row.state)),
+            ),
+            Span::raw(" · "),
+            Span::styled(
+                check_state_label(row.checks),
+                Style::default().fg(check_state_color(row.checks)),
+            ),
+            Span::raw(" · "),
+            Span::styled(
+                review_label(row.review.as_deref()),
+                Style::default().fg(review_color(review_label(row.review.as_deref()))),
+            ),
+            Span::raw(format!(" · {} comments", row.comments)),
+        ]),
+        Line::from(vec![
+            Span::styled("changes ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{total_changed} lines "),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::styled(
+                format!("+{} ", row.additions),
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled(
+                format!("-{} ", row.deletions),
+                Style::default().fg(Color::Red),
+            ),
+            Span::styled(
+                format!("{} files", row.changed_files),
+                Style::default().fg(Color::Gray),
+            ),
+        ]),
+        Line::from(Span::styled(
+            format!("{} · {} · {}", row.agent, row.agent_status, row.branch),
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(Span::styled(
+            row.url.clone(),
+            Style::default().fg(Color::Cyan),
+        )),
+    ];
+
+    if let Some(status) = status {
+        lines.push(Line::from(Span::styled(
+            status.to_string(),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+
+    lines
+}
+
+fn row_style(selected: bool) -> Style {
+    if selected {
+        Style::default().bg(Color::DarkGray).fg(Color::White)
     } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    Line::from(vec![Span::styled(
-        format!(
-            "  {} · {} · {} · {}",
-            row.agent, row.agent_status, row.branch, row.url
-        ),
-        style,
-    )])
+        Style::default().fg(Color::Gray)
+    }
 }
 
 const PR_OPEN_ICON: &str = "\u{F407}";
@@ -276,6 +479,15 @@ fn pr_state_color(state: PrState) -> Color {
     }
 }
 
+fn check_state_label(state: CheckState) -> &'static str {
+    match state {
+        CheckState::Pass => "CI OK",
+        CheckState::Pending => "CI WAIT",
+        CheckState::Fail => "CI FAIL",
+        CheckState::None => "CI -",
+    }
+}
+
 fn check_state_icon(state: CheckState) -> &'static str {
     match state {
         CheckState::Pass => CHECK_PASS_ICON,
@@ -294,11 +506,21 @@ fn check_state_color(state: CheckState) -> Color {
     }
 }
 
+fn review_label(review: Option<&str>) -> &'static str {
+    match review {
+        Some("APPROVED") => "approved",
+        Some("CHANGES_REQUESTED") => "changes",
+        Some("REVIEW_REQUIRED") => "review",
+        Some("REVIEWED") => "reviewed",
+        _ => "review -",
+    }
+}
+
 fn review_color(review: &str) -> Color {
     match review {
-        "APPROVED" => Color::Green,
-        "CHANGES_REQUESTED" => Color::Red,
-        "REVIEW_REQUIRED" => Color::Yellow,
+        "approved" | "APPROVED" => Color::Green,
+        "changes" | "CHANGES_REQUESTED" => Color::Red,
+        "review" | "REVIEW_REQUIRED" => Color::Yellow,
         _ => Color::DarkGray,
     }
 }
@@ -316,14 +538,22 @@ fn truncate(value: &str, max_chars: usize) -> String {
 }
 
 fn copy_to_clipboard(text: &str) -> Result<()> {
+    if is_ssh_session() {
+        copy_to_terminal_clipboard(text).context("failed to copy through terminal clipboard")?;
+        return Ok(());
+    }
+
     let mut command = if cfg!(target_os = "macos") {
         Command::new("pbcopy")
     } else if command_exists("wl-copy") {
         Command::new("wl-copy")
-    } else {
+    } else if command_exists("xclip") {
         let mut command = Command::new("xclip");
         command.args(["-selection", "clipboard"]);
         command
+    } else {
+        copy_to_terminal_clipboard(text).context("failed to copy through terminal clipboard")?;
+        return Ok(());
     };
 
     let mut child = command
@@ -337,7 +567,13 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
             .write_all(text.as_bytes())
             .context("failed to write clipboard text")?;
     }
-    let _ = child.wait();
+    let status = child
+        .wait()
+        .context("failed to wait for clipboard command")?;
+    if !status.success() {
+        copy_to_terminal_clipboard(text)
+            .context("clipboard command failed, terminal copy failed")?;
+    }
     Ok(())
 }
 

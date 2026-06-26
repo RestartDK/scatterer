@@ -1,16 +1,64 @@
 use super::{CheckState, PrRow, PrState};
-use crate::util::string_at;
+use crate::util::{command_exists, copy_to_terminal_clipboard, is_ssh_session, string_at};
+use anyhow::{Context, Result};
 use serde_json::Value;
+use std::env;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-pub(super) fn open_pr_in_browser(url: &str) {
-    let _ = Command::new("gh")
-        .args(["pr", "view", url, "--web"])
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OpenPrOutcome {
+    Opened,
+    CopiedToTerminalClipboard,
+}
+
+pub(super) fn open_pr_in_browser(url: &str) -> Result<OpenPrOutcome> {
+    if is_ssh_session() {
+        copy_to_terminal_clipboard(url)
+            .context("failed to copy URL to local terminal clipboard")?;
+        return Ok(OpenPrOutcome::CopiedToTerminalClipboard);
+    }
+
+    if cfg!(target_os = "macos") {
+        spawn_open_command("open", &[url]).context("failed to open URL with open")?;
+        return Ok(OpenPrOutcome::Opened);
+    }
+
+    if graphical_session_available() {
+        if command_exists("xdg-open") {
+            spawn_open_command("xdg-open", &[url]).context("failed to open URL with xdg-open")?;
+            return Ok(OpenPrOutcome::Opened);
+        }
+
+        if command_exists("gio") {
+            spawn_open_command("gio", &["open", url]).context("failed to open URL with gio")?;
+            return Ok(OpenPrOutcome::Opened);
+        }
+
+        if command_exists("gh") {
+            spawn_open_command("gh", &["pr", "view", url, "--web"])
+                .context("failed to open URL with gh")?;
+            return Ok(OpenPrOutcome::Opened);
+        }
+    }
+
+    copy_to_terminal_clipboard(url).context("failed to copy URL to terminal clipboard")?;
+    Ok(OpenPrOutcome::CopiedToTerminalClipboard)
+}
+
+fn spawn_open_command(program: &str, args: &[&str]) -> Result<()> {
+    Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn();
+        .spawn()
+        .with_context(|| format!("failed to start {program}"))?;
+    Ok(())
+}
+
+fn graphical_session_available() -> bool {
+    env::var_os("DISPLAY").is_some() || env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
 pub(super) fn pr_url_for_branch(cwd: &Path, branch: &str) -> Option<String> {
@@ -57,7 +105,7 @@ pub(super) fn pr_row_from_gh(
             "view",
             url,
             "--json",
-            "number,title,state,isDraft,mergedAt,url,reviewDecision,statusCheckRollup,comments,headRefName,baseRefName",
+            "number,title,state,isDraft,mergedAt,url,reviewDecision,statusCheckRollup,comments,headRefName,baseRefName,additions,deletions,changedFiles",
         ])
         .stdin(Stdio::null())
         .output()
@@ -78,6 +126,18 @@ pub(super) fn pr_row_from_gh(
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or_default();
+    let additions = value
+        .get("additions")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let deletions = value
+        .get("deletions")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let changed_files = value
+        .get("changedFiles")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
     let review = string_at(&value, &["reviewDecision"]).filter(|value| value != "");
     let head = string_at(&value, &["headRefName"]).unwrap_or_else(|| branch.to_string());
 
@@ -88,6 +148,9 @@ pub(super) fn pr_row_from_gh(
         state,
         checks,
         comments,
+        additions,
+        deletions,
+        changed_files,
         review,
         agent: agent.to_string(),
         agent_status: agent_status.to_string(),

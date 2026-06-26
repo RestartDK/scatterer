@@ -1,6 +1,6 @@
 id = "daniel.scatterer"
 name = "Scatterer"
-version = "0.1.4"
+version = "0.1.5"
 min_herdr_version = "0.7.0"
 description = "Daniel's Herdr workflow/layout plugin."
 platforms = ["macos", "linux"]
