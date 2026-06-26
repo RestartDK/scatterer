@@ -22,8 +22,13 @@ Enter a prompt, optionally enter a branch name, choose a Pi model from
 `pi --list-models`, and submit. Scatterer then:
 
 1. creates a Git worktree from the current repo
-2. applies the same three-tab layout in the new worktree workspace
-3. starts Pi in the `agent` tab with the entered prompt as Pi's initial message
+2. runs project worktree setup from `.herdr/setup.json` plus executable
+   `.herdr/setup-worktree.sh` / `.herdr/post-worktree-create.sh` hooks when present
+3. applies the same three-tab layout in the new worktree workspace
+4. starts Pi in the `agent` tab with the entered prompt as Pi's initial message
+
+Layout pane commands import `direnv export bash` before starting so tools like Pi,
+hunk, `process-compose`, and lazygit inherit the worktree's allowed `.envrc`.
 
 Pi supports this directly via its CLI: `pi [messages...]` starts interactive Pi
 with an initial prompt. Scatterer currently runs:
