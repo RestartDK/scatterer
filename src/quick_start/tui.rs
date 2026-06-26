@@ -1,4 +1,5 @@
 use super::pi::available_pi_models;
+use super::worktree::default_branch_for_prompt;
 use super::{Harness, QuickStartForm};
 use anyhow::{Context, Result};
 use crossterm::{
@@ -17,6 +18,10 @@ use ratatui::{
 use std::io;
 use std::time::Duration;
 
+const OVERLAY_WIDTH: u16 = 92;
+const OVERLAY_HEIGHT: u16 = 20;
+const PROMPT_PAGE_SCROLL: u16 = 5;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuickField {
     Prompt,
@@ -27,6 +32,8 @@ enum QuickField {
 #[derive(Debug)]
 struct QuickStartApp {
     prompt: String,
+    prompt_scroll: u16,
+    prompt_follow_end: bool,
     branch: String,
     harness: Harness,
     models: Vec<String>,
@@ -39,6 +46,8 @@ impl QuickStartApp {
     fn new() -> Self {
         Self {
             prompt: String::new(),
+            prompt_scroll: 0,
+            prompt_follow_end: true,
             branch: String::new(),
             harness: Harness::Pi,
             models: available_pi_models(),
@@ -76,7 +85,7 @@ fn run_quick_start_loop(
     let mut app = QuickStartApp::new();
     loop {
         terminal
-            .draw(|frame| draw_quick_start(frame, &app))
+            .draw(|frame| draw_quick_start(frame, &mut app))
             .context("failed to draw quick-start UI")?;
 
         if !event::poll(Duration::from_millis(250)).context("failed to poll terminal event")? {
@@ -108,12 +117,40 @@ fn handle_quick_start_key(
 
     match key.code {
         KeyCode::Esc => Ok(Some(None)),
+        KeyCode::Enter if app.field == QuickField::Prompt => {
+            app.insert_char('\n');
+            Ok(None)
+        }
         KeyCode::Enter => Ok(app.to_form().map(Some)),
-        KeyCode::Tab | KeyCode::Down => {
+        KeyCode::Tab => {
             app.next_field();
             Ok(None)
         }
-        KeyCode::BackTab | KeyCode::Up => {
+        KeyCode::BackTab => {
+            app.previous_field();
+            Ok(None)
+        }
+        KeyCode::Down if app.field == QuickField::Prompt => {
+            app.scroll_prompt_down(1);
+            Ok(None)
+        }
+        KeyCode::Up if app.field == QuickField::Prompt => {
+            app.scroll_prompt_up(1);
+            Ok(None)
+        }
+        KeyCode::PageDown if app.field == QuickField::Prompt => {
+            app.scroll_prompt_down(PROMPT_PAGE_SCROLL);
+            Ok(None)
+        }
+        KeyCode::PageUp if app.field == QuickField::Prompt => {
+            app.scroll_prompt_up(PROMPT_PAGE_SCROLL);
+            Ok(None)
+        }
+        KeyCode::Down => {
+            app.next_field();
+            Ok(None)
+        }
+        KeyCode::Up => {
             app.previous_field();
             Ok(None)
         }
@@ -163,7 +200,10 @@ impl QuickStartApp {
     fn insert_char(&mut self, ch: char) {
         self.error = None;
         match self.field {
-            QuickField::Prompt => self.prompt.push(ch),
+            QuickField::Prompt => {
+                self.prompt.push(ch);
+                self.prompt_follow_end = true;
+            }
             QuickField::Branch => self.branch.push(ch),
             QuickField::Model => {}
         }
@@ -172,7 +212,10 @@ impl QuickStartApp {
     fn insert_text(&mut self, text: &str) {
         self.error = None;
         match self.field {
-            QuickField::Prompt => self.prompt.push_str(text),
+            QuickField::Prompt => {
+                self.prompt.push_str(&normalize_multiline_text(text));
+                self.prompt_follow_end = true;
+            }
             QuickField::Branch => self.branch.push_str(&text.replace(['\n', '\r', '\t'], "-")),
             QuickField::Model => {}
         }
@@ -183,12 +226,35 @@ impl QuickStartApp {
         match self.field {
             QuickField::Prompt => {
                 self.prompt.pop();
+                self.prompt_follow_end = true;
             }
             QuickField::Branch => {
                 self.branch.pop();
             }
             QuickField::Model => {}
         }
+    }
+
+    fn scroll_prompt_up(&mut self, lines: u16) {
+        self.error = None;
+        self.prompt_follow_end = false;
+        self.prompt_scroll = self.prompt_scroll.saturating_sub(lines);
+    }
+
+    fn scroll_prompt_down(&mut self, lines: u16) {
+        self.error = None;
+        self.prompt_follow_end = false;
+        self.prompt_scroll = self.prompt_scroll.saturating_add(lines);
+    }
+
+    fn clamp_prompt_scroll(&mut self, area: Rect) -> u16 {
+        let max_scroll = prompt_max_scroll(&self.prompt, area);
+        if self.prompt_follow_end {
+            self.prompt_scroll = max_scroll;
+        } else {
+            self.prompt_scroll = self.prompt_scroll.min(max_scroll);
+        }
+        self.prompt_scroll
     }
 
     fn next_model(&mut self) {
@@ -233,8 +299,8 @@ impl QuickStartApp {
     }
 }
 
-fn draw_quick_start(frame: &mut Frame<'_>, app: &QuickStartApp) {
-    let area = centered_rect(frame.area(), 76, 13);
+fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
+    let area = centered_rect(frame.area(), OVERLAY_WIDTH, OVERLAY_HEIGHT);
     frame.render_widget(Clear, area);
     frame.render_widget(Block::default().borders(Borders::ALL), area);
 
@@ -242,28 +308,34 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &QuickStartApp) {
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
+            Constraint::Min(6),
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(area);
 
+    let prompt_scroll = app.clamp_prompt_scroll(chunks[0]);
+    let prompt_max_scroll = prompt_max_scroll(&app.prompt, chunks[0]);
     render_text_field(
         frame,
         chunks[0],
-        "Prompt",
-        "What should Pi do?",
+        prompt_title(prompt_scroll, prompt_max_scroll),
+        "What should Pi do? Enter adds a new line.",
         &app.prompt,
         app.field == QuickField::Prompt,
+        prompt_scroll,
     );
+
+    let branch_placeholder = format!("optional; auto: {}", default_branch_for_prompt(&app.prompt));
     render_text_field(
         frame,
         chunks[1],
-        "Branch",
-        "optional; auto: quick/<prompt-slug>-<timestamp>",
+        "Branch".to_string(),
+        &branch_placeholder,
         &app.branch,
         app.field == QuickField::Branch,
+        0,
     );
 
     let selected_model = app
@@ -287,14 +359,19 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &QuickStartApp) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )])
     } else {
-        Line::from("Tab/↓ next · Shift-Tab/↑ previous · Enter submit · Esc cancel")
+        Line::from(
+            "Ctrl+S submit · Enter newline in prompt / submit elsewhere · Tab fields · ↑/↓ scroll",
+        )
     };
-    frame.render_widget(Paragraph::new(footer_text), chunks[3]);
+    frame.render_widget(
+        Paragraph::new(footer_text).wrap(Wrap { trim: false }),
+        chunks[3],
+    );
 }
 
 fn centered_rect(container: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(container.width.saturating_sub(2)).max(20);
-    let height = height.min(container.height.saturating_sub(2)).max(8);
+    let height = height.min(container.height.saturating_sub(2)).max(10);
     let x = container.x + container.width.saturating_sub(width) / 2;
     let y = container.y + container.height.saturating_sub(height) / 2;
     Rect {
@@ -308,27 +385,29 @@ fn centered_rect(container: Rect, width: u16, height: u16) -> Rect {
 fn render_text_field(
     frame: &mut Frame<'_>,
     area: Rect,
-    title: &'static str,
-    placeholder: &'static str,
+    title: String,
+    placeholder: &str,
     value: &str,
     active: bool,
+    scroll: u16,
 ) {
     let lines = if value.is_empty() {
         vec![Line::from(Span::styled(
-            placeholder,
+            placeholder.to_string(),
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        value.lines().map(Line::from).collect::<Vec<_>>()
+        value.split('\n').map(Line::from).collect::<Vec<_>>()
     };
 
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
+        .scroll((scroll, 0))
         .block(field_block(title, active));
     frame.render_widget(paragraph, area);
 }
 
-fn field_block(title: &'static str, active: bool) -> Block<'static> {
+fn field_block(title: impl Into<String>, active: bool) -> Block<'static> {
     let style = if active {
         Style::default()
             .fg(Color::Cyan)
@@ -337,7 +416,45 @@ fn field_block(title: &'static str, active: bool) -> Block<'static> {
         Style::default().fg(Color::Gray)
     };
     Block::default()
-        .title(title)
+        .title(title.into())
         .borders(Borders::ALL)
         .border_style(style)
+}
+
+fn prompt_title(scroll: u16, max_scroll: u16) -> String {
+    if max_scroll == 0 {
+        "Prompt".to_string()
+    } else {
+        format!(
+            "Prompt {}/{}",
+            scroll.saturating_add(1),
+            max_scroll.saturating_add(1)
+        )
+    }
+}
+
+fn prompt_max_scroll(value: &str, area: Rect) -> u16 {
+    let visible_height = area.height.saturating_sub(2).max(1);
+    let inner_width = area.width.saturating_sub(2).max(1);
+    prompt_visual_line_count(value, inner_width).saturating_sub(visible_height)
+}
+
+fn prompt_visual_line_count(value: &str, width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    let visual_lines = if value.is_empty() {
+        1
+    } else {
+        value
+            .split('\n')
+            .map(|line| {
+                let chars = line.chars().count();
+                chars.max(1).div_ceil(width)
+            })
+            .sum::<usize>()
+    };
+    visual_lines.min(usize::from(u16::MAX)) as u16
+}
+
+fn normalize_multiline_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }

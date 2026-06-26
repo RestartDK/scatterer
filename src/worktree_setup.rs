@@ -15,6 +15,18 @@ enum SetupCommand {
     Argv { label: String, argv: Vec<String> },
 }
 
+#[derive(Debug)]
+struct SetupStep {
+    command: SetupCommand,
+    setup_path: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+struct ScriptHook {
+    path: PathBuf,
+    setup_path: Option<PathBuf>,
+}
+
 pub(crate) fn run_worktree_setup(
     source_cwd: &Path,
     worktree_path: &Path,
@@ -22,17 +34,20 @@ pub(crate) fn run_worktree_setup(
 ) -> Result<()> {
     let source_root = git_root(source_cwd).unwrap_or_else(|| source_cwd.to_path_buf());
     let worktree_root = git_root(worktree_path).unwrap_or_else(|| worktree_path.to_path_buf());
-    let setup_root = if worktree_root.join(".herdr").exists() {
-        worktree_root
-    } else {
-        source_root.clone()
-    };
 
-    let setup_path = setup_root.join(".herdr").join("setup.json");
-    let mut setup_commands = config_setup_commands(config);
-    setup_commands.extend(load_setup_commands(&setup_path)?);
-    let script_hooks = load_script_hooks(&setup_root);
-    if setup_commands.is_empty() && script_hooks.is_empty() {
+    let mut setup_steps = config_setup_commands(config);
+    for setup_path in discover_setup_files(&source_root, &worktree_root) {
+        setup_steps.extend(
+            load_setup_commands(&setup_path)?
+                .into_iter()
+                .map(|command| SetupStep {
+                    command,
+                    setup_path: Some(setup_path.clone()),
+                }),
+        );
+    }
+    let script_hooks = load_script_hooks(&source_root, &worktree_root);
+    if setup_steps.is_empty() && script_hooks.is_empty() {
         return Ok(());
     }
 
@@ -40,18 +55,18 @@ pub(crate) fn run_worktree_setup(
         "scatterer: running worktree setup for {}",
         worktree_path.display()
     );
-    for (index, command) in setup_commands.iter().enumerate() {
-        match command {
+    for (index, step) in setup_steps.iter().enumerate() {
+        match &step.command {
             SetupCommand::Shell { label, command } => {
                 eprintln!(
                     "scatterer: setup [{}/{}] {label}",
                     index + 1,
-                    setup_commands.len()
+                    setup_steps.len()
                 );
                 let status = setup_base_command(
                     shell_program(),
                     &source_root,
-                    Some(&setup_path),
+                    step.setup_path.as_deref(),
                     worktree_path,
                 )
                 .arg("-lc")
@@ -72,13 +87,17 @@ pub(crate) fn run_worktree_setup(
                 eprintln!(
                     "scatterer: setup [{}/{}] {label}",
                     index + 1,
-                    setup_commands.len()
+                    setup_steps.len()
                 );
-                let status =
-                    setup_base_command(&argv[0], &source_root, Some(&setup_path), worktree_path)
-                        .args(&argv[1..])
-                        .status()
-                        .with_context(|| format!("failed to run setup command '{label}'"))?;
+                let status = setup_base_command(
+                    &argv[0],
+                    &source_root,
+                    step.setup_path.as_deref(),
+                    worktree_path,
+                )
+                .args(&argv[1..])
+                .status()
+                .with_context(|| format!("failed to run setup command '{label}'"))?;
                 if !status.success() {
                     return Err(anyhow!(
                         "setup command '{label}' failed with status {}",
@@ -89,16 +108,20 @@ pub(crate) fn run_worktree_setup(
         }
     }
 
-    let setup_file_env = setup_path.is_file().then_some(setup_path.as_path());
     for hook in script_hooks {
-        eprintln!("scatterer: setup hook {}", hook.display());
-        let status = setup_base_command(&hook, &source_root, setup_file_env, worktree_path)
-            .status()
-            .with_context(|| format!("failed to run setup hook {}", hook.display()))?;
+        eprintln!("scatterer: setup hook {}", hook.path.display());
+        let status = setup_base_command(
+            &hook.path,
+            &source_root,
+            hook.setup_path.as_deref(),
+            worktree_path,
+        )
+        .status()
+        .with_context(|| format!("failed to run setup hook {}", hook.path.display()))?;
         if !status.success() {
             return Err(anyhow!(
                 "setup hook {} failed with status {}",
-                hook.display(),
+                hook.path.display(),
                 status
             ));
         }
@@ -107,15 +130,18 @@ pub(crate) fn run_worktree_setup(
     Ok(())
 }
 
-fn config_setup_commands(config: &ProjectConfig) -> Vec<SetupCommand> {
+fn config_setup_commands(config: &ProjectConfig) -> Vec<SetupStep> {
     config
         .quick_start
         .setup
         .commands
         .iter()
-        .map(|command| SetupCommand::Shell {
-            label: command.clone(),
-            command: command.clone(),
+        .map(|command| SetupStep {
+            command: SetupCommand::Shell {
+                label: command.clone(),
+                command: command.clone(),
+            },
+            setup_path: None,
         })
         .collect()
 }
@@ -202,12 +228,60 @@ fn normalize_setup_command(entry: &Value, index: usize) -> Result<SetupCommand> 
     ))
 }
 
-fn load_script_hooks(setup_root: &Path) -> Vec<PathBuf> {
+fn discover_setup_files(source_root: &Path, worktree_root: &Path) -> Vec<PathBuf> {
+    let source_path = source_root.join(".herdr").join("setup.json");
+    let worktree_path = worktree_root.join(".herdr").join("setup.json");
+    discover_source_and_worktree_paths(source_path, worktree_path, |path| path.is_file())
+}
+
+fn load_script_hooks(source_root: &Path, worktree_root: &Path) -> Vec<ScriptHook> {
     ["setup-worktree.sh", "post-worktree-create.sh"]
         .into_iter()
-        .map(|name| setup_root.join(".herdr").join(name))
-        .filter(|path| is_executable_file(path))
+        .flat_map(|name| {
+            let source_path = source_root.join(".herdr").join(name);
+            let worktree_path = worktree_root.join(".herdr").join(name);
+            discover_source_and_worktree_paths(source_path, worktree_path, is_executable_file)
+                .into_iter()
+                .map(|path| ScriptHook {
+                    setup_path: setup_file_next_to(&path),
+                    path,
+                })
+                .collect::<Vec<_>>()
+        })
         .collect()
+}
+
+fn discover_source_and_worktree_paths(
+    source_path: PathBuf,
+    worktree_path: PathBuf,
+    predicate: impl Fn(&Path) -> bool,
+) -> Vec<PathBuf> {
+    let source_exists = predicate(&source_path);
+    let worktree_exists = predicate(&worktree_path);
+    let mut paths = Vec::new();
+
+    if source_exists && (!worktree_exists || !same_file_contents(&source_path, &worktree_path)) {
+        paths.push(source_path);
+    }
+    if worktree_exists {
+        paths.push(worktree_path);
+    }
+
+    paths
+}
+
+fn same_file_contents(left: &Path, right: &Path) -> bool {
+    left == right
+        || fs::read(left)
+            .and_then(|left_contents| {
+                fs::read(right).map(|right_contents| left_contents == right_contents)
+            })
+            .unwrap_or(false)
+}
+
+fn setup_file_next_to(path: &Path) -> Option<PathBuf> {
+    let setup_path = path.parent()?.join("setup.json");
+    setup_path.is_file().then_some(setup_path)
 }
 
 fn is_executable_file(path: &Path) -> bool {
