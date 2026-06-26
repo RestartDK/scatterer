@@ -10,7 +10,7 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
@@ -367,6 +367,10 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         Paragraph::new(footer_text).wrap(Wrap { trim: false }),
         chunks[3],
     );
+
+    if let Some(position) = active_cursor_position(app, chunks[0], chunks[1], chunks[2]) {
+        frame.set_cursor_position(position);
+    }
 }
 
 fn centered_rect(container: Rect, width: u16, height: u16) -> Rect {
@@ -421,6 +425,73 @@ fn field_block(title: impl Into<String>, active: bool) -> Block<'static> {
         .border_style(style)
 }
 
+fn active_cursor_position(
+    app: &QuickStartApp,
+    prompt_area: Rect,
+    branch_area: Rect,
+    model_area: Rect,
+) -> Option<Position> {
+    match app.field {
+        QuickField::Prompt => {
+            text_field_cursor_position(prompt_area, &app.prompt, app.prompt_scroll)
+        }
+        QuickField::Branch => text_field_cursor_position(branch_area, &app.branch, 0),
+        QuickField::Model => model_cursor_position(model_area),
+    }
+}
+
+fn text_field_cursor_position(area: Rect, value: &str, scroll: u16) -> Option<Position> {
+    let inner = inner_area(area)?;
+    let (row, column) = visual_cursor_offset(value, inner.width);
+    let visible_row = row.saturating_sub(scroll);
+    let y = inner.y + visible_row.min(inner.height.saturating_sub(1));
+    let x = inner.x + column.min(inner.width.saturating_sub(1));
+    Some(Position { x, y })
+}
+
+fn model_cursor_position(area: Rect) -> Option<Position> {
+    let inner = inner_area(area)?;
+    Some(Position {
+        x: inner.x,
+        y: inner.y,
+    })
+}
+
+fn inner_area(area: Rect) -> Option<Rect> {
+    let width = area.width.checked_sub(2)?;
+    let height = area.height.checked_sub(2)?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some(Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width,
+        height,
+    })
+}
+
+fn visual_cursor_offset(value: &str, width: u16) -> (u16, u16) {
+    let width = usize::from(width.max(1));
+    let mut row = 0usize;
+    let mut parts = value.split('\n').peekable();
+
+    while let Some(part) = parts.next() {
+        let chars = part.chars().count();
+        if parts.peek().is_none() {
+            let column = chars % width;
+            let row_offset = chars / width;
+            return (
+                row.saturating_add(row_offset).min(usize::from(u16::MAX)) as u16,
+                column.min(usize::from(u16::MAX)) as u16,
+            );
+        }
+        row = row.saturating_add(chars.max(1).div_ceil(width));
+    }
+
+    (0, 0)
+}
+
 fn prompt_title(scroll: u16, max_scroll: u16) -> String {
     if max_scroll == 0 {
         "Prompt".to_string()
@@ -436,7 +507,10 @@ fn prompt_title(scroll: u16, max_scroll: u16) -> String {
 fn prompt_max_scroll(value: &str, area: Rect) -> u16 {
     let visible_height = area.height.saturating_sub(2).max(1);
     let inner_width = area.width.saturating_sub(2).max(1);
-    prompt_visual_line_count(value, inner_width).saturating_sub(visible_height)
+    let cursor_line_count = visual_cursor_offset(value, inner_width).0.saturating_add(1);
+    prompt_visual_line_count(value, inner_width)
+        .max(cursor_line_count)
+        .saturating_sub(visible_height)
 }
 
 fn prompt_visual_line_count(value: &str, width: u16) -> u16 {
