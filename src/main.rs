@@ -5,9 +5,11 @@ mod focus;
 mod git;
 mod herdr;
 mod layout;
+mod pane_env;
 mod pr_picker;
 mod quick_start;
 mod util;
+mod worktree_setup;
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);

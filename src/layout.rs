@@ -1,5 +1,6 @@
 use crate::config::{ProjectConfig, load_project_config};
 use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
+use crate::pane_env;
 use crate::util::first_string;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -31,10 +32,12 @@ pub(crate) fn apply_layout() -> Result<()> {
         created.workspace_id
     );
     println!("scatterer: cwd {}", source.cwd.display());
-    if let Some(path) = config_path {
-        println!("scatterer: project config {}", path.display());
+    if config_path.is_empty() {
+        println!("scatterer: no Scatterer config found; used default commands");
     } else {
-        println!("scatterer: no .scatterer.toml found; used default commands");
+        for path in config_path {
+            println!("scatterer: project config {}", path.display());
+        }
     }
 
     Ok(())
@@ -63,12 +66,13 @@ pub(crate) fn apply_scatterer_layout(
         "if command -v lazygit >/dev/null 2>&1; then lazygit; else echo 'lazygit not found; showing git status'; git status --short; fi",
     );
 
+    let load_direnv = config.env.direnv_enabled();
     let dev_root = json!({
         "type": "split",
         "direction": "right",
         "ratio": 0.58,
-        "first": pane("pi", &cwd_string, agent),
-        "second": pane("hunk", &cwd_string, hunk),
+        "first": pane("pi", &cwd_string, agent, load_direnv),
+        "second": pane("hunk", &cwd_string, hunk, load_direnv),
     });
 
     apply_tab(
@@ -84,7 +88,7 @@ pub(crate) fn apply_scatterer_layout(
         workspace_id,
         None,
         "runner",
-        pane("runner", &cwd_string, runner),
+        pane("runner", &cwd_string, runner, load_direnv),
         false,
     )?;
     apply_tab(
@@ -92,7 +96,7 @@ pub(crate) fn apply_scatterer_layout(
         workspace_id,
         None,
         "git",
-        pane("lazygit", &cwd_string, git),
+        pane("lazygit", &cwd_string, git, load_direnv),
         false,
     )?;
 
@@ -152,31 +156,13 @@ fn workspace_label(cwd: &Path) -> String {
     format!("{name} · scatterer")
 }
 
-fn pane(label: &str, cwd: &str, command: &str) -> Value {
+fn pane(label: &str, cwd: &str, command: &str, load_direnv: bool) -> Value {
     json!({
         "type": "pane",
         "label": label,
         "cwd": cwd,
-        "command": shell_command(command),
+        "command": pane_env::shell_command(command, load_direnv),
     })
-}
-
-fn shell_command(command: &str) -> Value {
-    let wrapped = format!(
-        r#"if command -v direnv >/dev/null 2>&1 && [ -f .envrc ]; then
-  if direnv_export="$(direnv export bash)"; then
-    eval "$direnv_export"
-  else
-    printf '[scatterer] direnv export failed; continuing without direnv env\n' >&2
-  fi
-fi
-{command}
-status=$?
-printf '\n[scatterer] command exited with status %s; starting shell...\n' "$status"
-exec "${{SHELL:-sh}}"
-"#
-    );
-    json!(["bash", "-lc", wrapped])
 }
 
 fn apply_tab(

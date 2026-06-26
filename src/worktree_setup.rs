@@ -1,3 +1,4 @@
+use crate::config::ProjectConfig;
 use crate::git::{git_branch, git_root};
 use crate::util::command_exists;
 use anyhow::{Context, Result, anyhow};
@@ -14,7 +15,11 @@ enum SetupCommand {
     Argv { label: String, argv: Vec<String> },
 }
 
-pub(super) fn run_worktree_setup(source_cwd: &Path, worktree_path: &Path) -> Result<()> {
+pub(crate) fn run_worktree_setup(
+    source_cwd: &Path,
+    worktree_path: &Path,
+    config: &ProjectConfig,
+) -> Result<()> {
     let source_root = git_root(source_cwd).unwrap_or_else(|| source_cwd.to_path_buf());
     let worktree_root = git_root(worktree_path).unwrap_or_else(|| worktree_path.to_path_buf());
     let setup_root = if worktree_root.join(".herdr").exists() {
@@ -24,7 +29,8 @@ pub(super) fn run_worktree_setup(source_cwd: &Path, worktree_path: &Path) -> Res
     };
 
     let setup_path = setup_root.join(".herdr").join("setup.json");
-    let setup_commands = load_setup_commands(&setup_path)?;
+    let mut setup_commands = config_setup_commands(config);
+    setup_commands.extend(load_setup_commands(&setup_path)?);
     let script_hooks = load_script_hooks(&setup_root);
     if setup_commands.is_empty() && script_hooks.is_empty() {
         return Ok(());
@@ -99,6 +105,19 @@ pub(super) fn run_worktree_setup(source_cwd: &Path, worktree_path: &Path) -> Res
     }
 
     Ok(())
+}
+
+fn config_setup_commands(config: &ProjectConfig) -> Vec<SetupCommand> {
+    config
+        .quick_start
+        .setup
+        .commands
+        .iter()
+        .map(|command| SetupCommand::Shell {
+            label: command.clone(),
+            command: command.clone(),
+        })
+        .collect()
 }
 
 fn load_setup_commands(setup_path: &Path) -> Result<Vec<SetupCommand>> {

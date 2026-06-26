@@ -1,5 +1,4 @@
 mod pi;
-mod setup;
 mod tui;
 mod worktree;
 
@@ -8,6 +7,7 @@ use crate::focus::focus_workspace_later;
 use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
 use crate::layout::apply_scatterer_layout;
 use crate::util::{non_empty_env, slugify};
+use crate::worktree_setup::run_worktree_setup;
 use anyhow::{Context, Result};
 use serde_json::json;
 
@@ -65,7 +65,7 @@ pub(crate) fn run() -> Result<()> {
     let (config, config_path) = load_project_config(&source.cwd)?;
     let branch = worktree::branch_for_form(&form);
     let created = worktree::create_worktree(&socket_path, &source.cwd, &branch, &form.prompt)?;
-    setup::run_worktree_setup(&source.cwd, &created.path)?;
+    run_worktree_setup(&source.cwd, &created.path, &config)?;
     let pi_command = pi::pi_prompt_command(&form);
 
     apply_scatterer_layout(
@@ -80,7 +80,7 @@ pub(crate) fn run() -> Result<()> {
     println!("scatterer: quick-started {} worktree", form.harness.label());
     println!("scatterer: branch {branch}");
     println!("scatterer: path {}", created.path.display());
-    if let Some(path) = config_path {
+    for path in config_path {
         println!("scatterer: project config {}", path.display());
     }
     focus_workspace_later(&created.workspace_id);
