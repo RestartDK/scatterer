@@ -19,7 +19,8 @@ the workspace you invoked it from.
 
 The `daniel.scatterer.quick-start` action opens a Herdr overlay TUI. Enter a
 multi-line prompt, optionally enter a branch name, choose a Pi model from
-`pi --list-models`, and submit with `Ctrl+S`. If the branch is empty, Scatterer
+`pi --list-models`, and submit with `Enter`. Use `Shift+Enter` to add prompt
+lines. If the branch is empty, Scatterer
 uses `daniel/<prompt-slug>`. The branch name is also used as the worktree
 workspace name and Pi session name. Scatterer then:
 
