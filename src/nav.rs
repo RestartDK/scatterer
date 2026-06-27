@@ -17,7 +17,7 @@ enum Direction {
 #[derive(Debug, Default)]
 struct FocusedProcessInfo {
     pane_id: Option<String>,
-    is_vim: bool,
+    is_passthrough: bool,
 }
 
 pub(crate) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
@@ -36,13 +36,15 @@ pub(crate) fn run_direction(direction: &str) -> Result<()> {
     let process_info = focused_process_info(&herdr).unwrap_or_default();
     let pane_id = non_empty_env("HERDR_PANE_ID").or(process_info.pane_id);
 
-    if process_info.is_vim {
+    if process_info.is_passthrough {
         if let Some(pane_id) = pane_id {
             return run_herdr(
                 &herdr,
                 &["pane", "send-keys", pane_id.as_str(), direction.key()],
             )
-            .with_context(|| format!("failed to send {} to focused Vim pane", direction.key()));
+            .with_context(|| {
+                format!("failed to send {} to focused Vim/SSH pane", direction.key())
+            });
         }
     }
 
@@ -113,22 +115,25 @@ fn focused_process_info(herdr: &str) -> Result<FocusedProcessInfo> {
         .and_then(|result| result.get("process_info"))
         .unwrap_or(&value);
     let pane_id = string_at(process_info, &["pane_id"]);
-    let is_vim = process_info
+    let is_passthrough = process_info
         .get("foreground_processes")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .any(process_looks_like_vim);
+        .any(process_should_receive_key);
 
-    Ok(FocusedProcessInfo { pane_id, is_vim })
+    Ok(FocusedProcessInfo {
+        pane_id,
+        is_passthrough,
+    })
 }
 
-fn process_looks_like_vim(process: &Value) -> bool {
+fn process_should_receive_key(process: &Value) -> bool {
     ["name", "argv0"]
         .into_iter()
         .filter_map(|field| string_at(process, &[field]))
         .map(|name| process_basename(&name).to_ascii_lowercase())
-        .any(|name| vim_process_regex().is_match(&name))
+        .any(|name| vim_process_regex().is_match(&name) || ssh_process_regex().is_match(&name))
 }
 
 fn process_basename(name: &str) -> String {
@@ -142,6 +147,11 @@ fn process_basename(name: &str) -> String {
 fn vim_process_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^g?(view|l?n?vim?x?)(diff)?$").expect("valid Vim regex"))
+}
+
+fn ssh_process_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(ssh|mosh-client)$").expect("valid SSH regex"))
 }
 
 fn run_herdr(herdr: &str, args: &[&str]) -> Result<()> {

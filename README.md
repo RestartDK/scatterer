@@ -66,6 +66,8 @@ focused pane's foreground process with `herdr pane process-info --current`:
 
 - if it is Vim/Neovim, Scatterer sends the matching `ctrl+h/j/k/l` key into that
   pane so the editor can move between its own splits
+- if it is `ssh`/`mosh-client`, Scatterer also sends the key into the pane so a
+  remote Neovim/Herdr session can handle it instead of local Herdr stealing it
 - otherwise, Scatterer moves Herdr focus directly with `herdr pane focus`
 
 For seamless split-edge handoff, Neovim still needs a small Lua keymap that tries
