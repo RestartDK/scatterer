@@ -62,7 +62,8 @@ the focused pane's current working directory.
 
 The `daniel.scatterer.nav-left`, `nav-down`, `nav-up`, and `nav-right` actions
 provide the Herdr side of Vim-style pane navigation. Each action checks the
-focused pane's foreground process with `herdr pane process-info --current`:
+focused pane's foreground process with `herdr pane process-info` and, for wrapper
+processes such as `sudo`/network-namespace shells, scans descendants too:
 
 - if it is Vim/Neovim, Scatterer sends the matching `ctrl+h/j/k/l` key into that
   pane so the editor can move between its own splits
