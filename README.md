@@ -46,6 +46,11 @@ with an initial prompt. Scatterer currently runs:
 pi --name "<branch>" [--model "provider/model"] "<prompt>"
 ```
 
+## Lazygit overlay
+
+The `daniel.scatterer.lazygit` action opens `lazygit` in a Herdr overlay using
+the focused pane's current working directory.
+
 ## PR picker
 
 The `daniel.scatterer.pr-picker` action opens the same compact overlay style and
@@ -75,6 +80,7 @@ herdr plugin link .
 herdr plugin action invoke daniel.scatterer.apply-layout
 herdr plugin action invoke daniel.scatterer.quick-start
 herdr plugin action invoke daniel.scatterer.pr-picker
+herdr plugin action invoke daniel.scatterer.lazygit
 ```
 
 ## Keybinding
@@ -95,15 +101,21 @@ command = "daniel.scatterer.quick-start"
 description = "scatterer quick start"
 
 [[keys.command]]
-key = "prefix+shift+r"
+key = "prefix+shift+p"
 type = "plugin_action"
 command = "daniel.scatterer.pr-picker"
 description = "scatterer PR picker"
+
+[[keys.command]]
+key = "prefix+shift+g"
+type = "plugin_action"
+command = "daniel.scatterer.lazygit"
+description = "lazygit"
 ```
 
 With Daniel's current `prefix = "ctrl+x"`, these are `ctrl+x` then `shift+s`
-for layout, `ctrl+x` then `shift+a` for quick start, and `ctrl+x` then
-`shift+r` for PR picker.
+for layout, `ctrl+x` then `shift+a` for quick start, `ctrl+x` then `shift+p`
+for PR picker, and `ctrl+x` then `shift+g` for lazygit.
 
 ## Per-project configuration
 
