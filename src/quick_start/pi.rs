@@ -2,8 +2,13 @@ use super::{QuickStartForm, quick_start_name};
 use crate::util::shell_quote;
 use std::process::{Command, Stdio};
 
-pub(super) fn pi_prompt_command(form: &QuickStartForm, branch: &str) -> String {
-    let name = pi_session_name(form, branch);
+pub(super) fn pi_agent_command(form: &QuickStartForm, session_name: &str) -> Option<String> {
+    let prompt = form.prompt.trim();
+    if prompt.is_empty() && form.model.is_none() {
+        return None;
+    }
+
+    let name = pi_session_name(form, session_name);
     let mut command = format!(
         "if command -v pi >/dev/null 2>&1; then pi --name {}",
         shell_quote(&name),
@@ -12,18 +17,20 @@ pub(super) fn pi_prompt_command(form: &QuickStartForm, branch: &str) -> String {
         command.push_str(" --model ");
         command.push_str(&shell_quote(model));
     }
-    command.push(' ');
-    command.push_str(&shell_quote(&form.prompt));
+    if !prompt.is_empty() {
+        command.push(' ');
+        command.push_str(&shell_quote(prompt));
+    }
     command.push_str("; else echo 'pi not found on PATH'; fi");
-    command
+    Some(command)
 }
 
-fn pi_session_name(form: &QuickStartForm, branch: &str) -> String {
-    let branch = branch.trim();
-    if branch.is_empty() {
+fn pi_session_name(form: &QuickStartForm, session_name: &str) -> String {
+    let session_name = session_name.trim();
+    if session_name.is_empty() {
         quick_start_name(&form.prompt)
     } else {
-        branch.to_string()
+        session_name.to_string()
     }
 }
 

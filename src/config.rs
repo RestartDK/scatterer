@@ -20,9 +20,9 @@ pub(crate) struct LayoutConfig {
     /// Command for the hunk pane in tab 1.
     #[serde(alias = "diff")]
     pub(crate) hunk: Option<String>,
-    /// Command for the single runner pane in tab 2.
+    /// Optional command for a project-specific runner tab.
     pub(crate) runner: Option<String>,
-    /// Command for the single git pane in tab 3.
+    /// Optional command for a project-specific git tab.
     pub(crate) git: Option<String>,
 }
 
@@ -47,9 +47,9 @@ pub(crate) struct QuickStartConfig {
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct QuickStartSetupConfig {
-    /// Shell commands to run in each newly created worktree before the layout is
-    /// applied. Commands are merged in config discovery order, so local config
-    /// can add personal setup without replacing project defaults.
+    /// Shell commands to run in each newly created quick-start worktree before
+    /// the layout is applied. Commands are merged in config discovery order, so
+    /// local config can add personal setup without replacing project defaults.
     #[serde(default)]
     pub(crate) commands: Vec<String>,
 }

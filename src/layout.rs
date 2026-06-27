@@ -8,9 +8,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 #[derive(Debug)]
-struct CreatedWorkspace {
-    workspace_id: String,
-    initial_tab_id: String,
+pub(crate) struct CreatedWorkspace {
+    pub(crate) workspace_id: String,
+    pub(crate) initial_tab_id: String,
 }
 
 pub(crate) fn apply_layout() -> Result<()> {
@@ -34,7 +34,7 @@ pub(crate) fn apply_layout() -> Result<()> {
     );
     println!("scatterer: cwd {}", source.cwd.display());
     if config_path.is_empty() {
-        println!("scatterer: no Scatterer config found; used default commands");
+        println!("scatterer: no Scatterer config found; used default agent/hunk commands");
     } else {
         for path in config_path {
             println!("scatterer: project config {}", path.display());
@@ -60,12 +60,8 @@ pub(crate) fn apply_scatterer_layout(
     let hunk = config.layout.hunk.as_deref().unwrap_or(
         "if command -v hunk >/dev/null 2>&1; then hunk; else echo 'hunk not found on PATH'; fi",
     );
-    let runner = config.layout.runner.as_deref().unwrap_or(
-        "if command -v process-compose >/dev/null 2>&1 && { [ -f process-compose.yml ] || [ -f process-compose.yaml ]; }; then process-compose up; else echo 'No process-compose.yml/yaml found. Configure [layout].runner in .scatterer.toml to override this tab.'; fi",
-    );
-    let git = config.layout.git.as_deref().unwrap_or(
-        "if command -v lazygit >/dev/null 2>&1; then lazygit; else echo 'lazygit not found; showing git status'; git status --short; fi",
-    );
+    let runner = optional_command(config.layout.runner.as_deref());
+    let git = optional_command(config.layout.git.as_deref());
 
     let load_direnv = config.env.direnv_enabled();
     let dev_root = json!({
@@ -84,27 +80,31 @@ pub(crate) fn apply_scatterer_layout(
         dev_root,
         true,
     )?;
-    apply_tab(
-        socket_path,
-        workspace_id,
-        None,
-        "runner",
-        pane("runner", &cwd_string, runner, load_direnv),
-        false,
-    )?;
-    apply_tab(
-        socket_path,
-        workspace_id,
-        None,
-        "git",
-        pane("lazygit", &cwd_string, git, load_direnv),
-        false,
-    )?;
+    if let Some(runner) = runner {
+        apply_tab(
+            socket_path,
+            workspace_id,
+            None,
+            "runner",
+            pane("runner", &cwd_string, runner, load_direnv),
+            false,
+        )?;
+    }
+    if let Some(git) = git {
+        apply_tab(
+            socket_path,
+            workspace_id,
+            None,
+            "git",
+            pane("git", &cwd_string, git, load_direnv),
+            false,
+        )?;
+    }
 
     Ok(())
 }
 
-fn create_workspace(socket_path: &Path, cwd: &Path) -> Result<CreatedWorkspace> {
+pub(crate) fn create_workspace(socket_path: &Path, cwd: &Path) -> Result<CreatedWorkspace> {
     let cwd_string = cwd.to_string_lossy().to_string();
     let label = workspace_label(cwd);
     let result = socket_call(
@@ -165,6 +165,13 @@ fn pane(label: &str, cwd: &str, command: &str, load_direnv: bool) -> Value {
         "label": label,
         "cwd": cwd,
         "command": pane_env::shell_command(command, load_direnv),
+    })
+}
+
+fn optional_command(command: Option<&str>) -> Option<&str> {
+    command.and_then(|command| {
+        let command = command.trim();
+        (!command.is_empty()).then_some(command)
     })
 }
 
