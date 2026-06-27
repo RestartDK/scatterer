@@ -1,6 +1,6 @@
 id = "daniel.scatterer"
 name = "Scatterer"
-version = "0.1.5"
+version = "0.1.6"
 min_herdr_version = "0.7.0"
 description = "Daniel's Herdr workflow/layout plugin."
 platforms = ["macos", "linux"]
@@ -30,6 +30,13 @@ description = "Show PRs associated with active Herdr agents and focus their work
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-pr-picker"]
 
+[[actions]]
+id = "lazygit"
+title = "Lazygit"
+description = "Open lazygit for the focused pane's cwd in a Herdr overlay."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "open-lazygit"]
+
 [[panes]]
 id = "quick-start"
 title = "Quick start"
@@ -41,3 +48,9 @@ id = "pr-picker"
 title = "PRs"
 placement = "overlay"
 command = ["bash", "scripts/scatterer.sh", "pr-picker"]
+
+[[panes]]
+id = "lazygit"
+title = "Lazygit"
+placement = "overlay"
+command = ["bash", "scripts/scatterer.sh", "lazygit"]
