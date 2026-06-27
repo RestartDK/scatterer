@@ -12,14 +12,14 @@ platforms = ["macos", "linux"]
 [[actions]]
 id = "apply-layout"
 title = "Apply Scatterer layout"
-description = "Create a new workspace with the default three-tab Scatterer layout."
+description = "Create a new workspace with the default Scatterer layout."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "apply-layout"]
 
 [[actions]]
 id = "quick-start"
-title = "Quick start Pi worktree"
-description = "Prompt for a task, create a worktree, apply the Scatterer layout, and start Pi."
+title = "Quick start Pi workspace"
+description = "Open a workspace or worktree, optionally switch/create a branch, apply the Scatterer layout, and optionally start Pi with a prompt."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
 
@@ -36,6 +36,34 @@ title = "Lazygit"
 description = "Open lazygit for the focused pane's cwd in a Herdr overlay."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-lazygit"]
+
+[[actions]]
+id = "nav-left"
+title = "Navigate left (Vim/Herdr)"
+description = "Move left across Vim/Neovim splits and Herdr panes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "nav", "left"]
+
+[[actions]]
+id = "nav-down"
+title = "Navigate down (Vim/Herdr)"
+description = "Move down across Vim/Neovim splits and Herdr panes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "nav", "down"]
+
+[[actions]]
+id = "nav-up"
+title = "Navigate up (Vim/Herdr)"
+description = "Move up across Vim/Neovim splits and Herdr panes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "nav", "up"]
+
+[[actions]]
+id = "nav-right"
+title = "Navigate right (Vim/Herdr)"
+description = "Move right across Vim/Neovim splits and Herdr panes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "nav", "right"]
 
 [[panes]]
 id = "quick-start"

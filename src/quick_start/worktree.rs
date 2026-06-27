@@ -76,6 +76,11 @@ pub(super) fn branch_for_form(form: &QuickStartForm) -> String {
     default_branch_for_prompt(&form.prompt)
 }
 
+pub(super) fn requested_workspace_branch(form: &QuickStartForm) -> Option<String> {
+    let branch = form.branch.trim();
+    (!branch.is_empty()).then_some(branch.to_string())
+}
+
 pub(super) fn default_branch_for_prompt(prompt: &str) -> String {
     let slug = slugify(prompt, 48);
     format!("daniel/{slug}")
@@ -93,7 +98,7 @@ fn workspace_label(branch: &str, prompt: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quick_start::Harness;
+    use crate::quick_start::{Harness, QuickStartTarget};
 
     #[test]
     fn default_branch_uses_daniel_prompt_slug() {
@@ -108,6 +113,7 @@ mod tests {
         let form = QuickStartForm {
             prompt: "anything".to_string(),
             branch: "feature/custom".to_string(),
+            target: QuickStartTarget::Worktree,
             harness: Harness::Pi,
             model: None,
         };

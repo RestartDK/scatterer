@@ -6,6 +6,7 @@ mod git;
 mod herdr;
 mod layout;
 mod lazygit;
+mod nav;
 mod pane_env;
 mod pr_picker;
 mod quick_start;
@@ -22,9 +23,14 @@ fn main() -> Result<()> {
         Some("pr-picker") => pr_picker::run(),
         Some("open-lazygit") => lazygit::open(),
         Some("lazygit") => lazygit::run(),
+        Some("nav") => nav::run(args),
+        Some("nav-left") => nav::run_direction("left"),
+        Some("nav-down") => nav::run_direction("down"),
+        Some("nav-up") => nav::run_direction("up"),
+        Some("nav-right") => nav::run_direction("right"),
         Some("focus-target") => focus::focus_target(args),
         Some(other) => Err(anyhow!(
-            "unknown command '{other}'. Try: scatterer apply-layout | open-quick-start | quick-start | open-pr-picker | pr-picker | open-lazygit | lazygit"
+            "unknown command '{other}'. Try: scatterer apply-layout | open-quick-start | quick-start | open-pr-picker | pr-picker | open-lazygit | lazygit | nav <left|down|up|right>"
         )),
     }
 }

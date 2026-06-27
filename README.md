@@ -6,33 +6,40 @@ Personal Herdr workflow plugin.
 
 The `daniel.scatterer.apply-layout` action creates a new Herdr workspace/space
 from the currently focused pane's cwd, then uses Herdr's declarative
-`layout.apply` socket API to make three tabs:
-
-1. `agent`: `pi` on the left, `hunk` on the right
-2. `runner`: `process-compose up`
-3. `git`: `lazygit`
+`layout.apply` socket API to make an `agent` tab with `pi` on the left and
+`hunk` on the right.
 
 Repeated invocations create another workspace/space. It does not append tabs to
-the workspace you invoked it from.
+the workspace you invoked it from. Project config can add extra layout tabs such
+as a runner or git UI.
 
 ## Quick start
 
-The `daniel.scatterer.quick-start` action opens a Herdr overlay TUI. Enter a
-multi-line prompt, optionally enter a branch name, choose a Pi model from
+The `daniel.scatterer.quick-start` action opens a Herdr overlay TUI. Optionally
+enter a multi-line Pi prompt, choose whether to open a normal workspace or create
+a new worktree, optionally enter a branch name, choose a Pi model from
 `pi --list-models`, and submit with `Enter`. Use `Shift+Enter` to add prompt
-lines. If the branch is empty, Scatterer
-uses `daniel/<prompt-slug>`. The branch name is also used as the worktree
-workspace name and Pi session name. Scatterer then:
+lines.
 
-1. creates a Git worktree from the current repo
-2. runs project worktree setup from merged Scatterer config, `.herdr/setup.json`,
-   and executable `.herdr/setup-worktree.sh` / `.herdr/post-worktree-create.sh`
-   hooks when present
-3. applies the same three-tab layout in the new worktree workspace
-4. starts Pi in the `agent` tab with the entered prompt as Pi's initial message
+In `workspace` mode, an empty branch keeps the current branch; entering a branch
+switches to it or creates it before opening the workspace. In `worktree` mode,
+an empty branch uses `daniel/<prompt-slug>`, so either a prompt or branch is
+required. The branch name is also used as the worktree workspace name; when
+Scatterer starts Pi explicitly for a prompt/model selection, it uses the branch
+or current workspace name as the Pi session name. Scatterer then:
+
+1. creates a Herdr workspace, or creates a Git worktree and opens its workspace
+2. for new worktrees only, runs project worktree setup from merged Scatterer
+   config, `.herdr/setup.json`, and executable `.herdr/setup-worktree.sh` /
+   `.herdr/post-worktree-create.sh` hooks when present
+3. applies the Scatterer layout in the workspace
+4. starts Pi with the entered prompt as Pi's initial message when a prompt is
+   present; if the prompt is empty, the workspace opens without an initial agent
+   message
 
 Layout pane commands import `direnv export bash` before starting so tools like Pi,
-hunk, `process-compose`, and lazygit inherit the worktree's allowed `.envrc`.
+hunk, and any project-configured runner/git commands inherit the workspace's
+allowed `.envrc`.
 If lorri has not finished evaluating yet, Scatterer waits and retries briefly
 before launching panes. If direnv still fails, Scatterer continues without that
 environment and disables direnv hooks in the fallback shell so the same `.envrc`
@@ -40,16 +47,30 @@ error does not repeat. Set `[env] direnv = false` in Scatterer config to disable
 direnv per project.
 
 Pi supports this directly via its CLI: `pi [messages...]` starts interactive Pi
-with an initial prompt. Scatterer currently runs:
+with an initial prompt. When a prompt or non-default model is selected, Scatterer runs:
 
 ```sh
-pi --name "<branch>" [--model "provider/model"] "<prompt>"
+pi --name "<branch-or-session>" [--model "provider/model"] ["<prompt>"]
 ```
 
 ## Lazygit overlay
 
 The `daniel.scatterer.lazygit` action opens `lazygit` in a Herdr overlay using
 the focused pane's current working directory.
+
+## Vim/Herdr navigation
+
+The `daniel.scatterer.nav-left`, `nav-down`, `nav-up`, and `nav-right` actions
+provide the Herdr side of Vim-style pane navigation. Each action checks the
+focused pane's foreground process with `herdr pane process-info --current`:
+
+- if it is Vim/Neovim, Scatterer sends the matching `ctrl+h/j/k/l` key into that
+  pane so the editor can move between its own splits
+- otherwise, Scatterer moves Herdr focus directly with `herdr pane focus`
+
+For seamless split-edge handoff, Neovim still needs a small Lua keymap that tries
+`wincmd h/j/k/l` first and calls `herdr pane focus --direction ... --current`
+when the current Neovim window does not change.
 
 ## PR picker
 
@@ -81,6 +102,7 @@ herdr plugin action invoke daniel.scatterer.apply-layout
 herdr plugin action invoke daniel.scatterer.quick-start
 herdr plugin action invoke daniel.scatterer.pr-picker
 herdr plugin action invoke daniel.scatterer.lazygit
+herdr plugin action invoke daniel.scatterer.nav-left
 ```
 
 ## Keybinding
@@ -111,11 +133,37 @@ key = "prefix+shift+g"
 type = "plugin_action"
 command = "daniel.scatterer.lazygit"
 description = "lazygit"
+
+[[keys.command]]
+key = "ctrl+h"
+type = "plugin_action"
+command = "daniel.scatterer.nav-left"
+description = "navigate left (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "plugin_action"
+command = "daniel.scatterer.nav-down"
+description = "navigate down (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "plugin_action"
+command = "daniel.scatterer.nav-up"
+description = "navigate up (vim/herdr)"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "plugin_action"
+command = "daniel.scatterer.nav-right"
+description = "navigate right (vim/herdr)"
 ```
 
 With Daniel's current `prefix = "ctrl+x"`, these are `ctrl+x` then `shift+s`
 for layout, `ctrl+x` then `shift+a` for quick start, `ctrl+x` then `shift+p`
-for PR picker, and `ctrl+x` then `shift+g` for lazygit.
+for PR picker, and `ctrl+x` then `shift+g` for lazygit. The navigation bindings
+are direct `ctrl+h/j/k/l` chords, which shadow shell readline defaults such as
+`ctrl+l` clear-screen and `ctrl+k` kill-line.
 
 ## Per-project configuration
 
@@ -133,12 +181,13 @@ Use `.scatterer.toml` for project config you are comfortable committing. Use
 ```toml
 [env]
 # Defaults to true. When enabled, Scatterer-created panes run
-# `direnv export bash` before launching pi/hunk/runner/lazygit.
+# `direnv export bash` before launching pi/hunk and any configured tabs.
 direnv = true
 
 [layout]
 agent = "pi"
 hunk = "hunk"
+# Optional per-project tabs. Defaults do not include process-compose or lazygit.
 runner = "process-compose up"
 git = "lazygit"
 
@@ -151,8 +200,7 @@ commands = [
 ]
 ```
 
-`runner` is the main layout command you'll normally customize per project, for
-example:
+Set `runner` only in projects that need a runner tab, for example:
 
 ```toml
 [layout]
