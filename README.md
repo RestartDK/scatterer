@@ -58,6 +58,33 @@ pi --name "<branch-or-session>" [--model "provider/model"] ["<prompt>"]
 The `daniel.scatterer.lazygit` action opens `lazygit` in a Herdr overlay using
 the focused pane's current working directory.
 
+## macOS appearance sync
+
+Scatterer includes a macOS-only temporary bridge for Pi panes while Herdr does
+not yet forward host terminal light/dark color-scheme events to child panes.
+Enable Herdr's own UI auto-switching in `~/.config/herdr/config.toml`:
+
+```toml
+[theme]
+auto_switch = true
+dark_name = "tokyo-night"
+light_name = "tokyo-night-day"
+```
+
+Then run a one-shot sync, or install the LaunchAgent watcher:
+
+```sh
+scatterer appearance sync
+scatterer appearance install-launchd
+scatterer appearance uninstall-launchd
+```
+
+The watcher polls macOS `AppleInterfaceStyle` and sends Pi-compatible terminal
+color-scheme reports (`CSI ? 997 ; 1/2 n`) into active Pi panes. This should be
+removed once Herdr upstream can proxy child-pane color-scheme queries and
+notifications (`CSI ? 996 n`, `CSI ? 2031 h/l`). Daniel should open that Herdr PR
+when there is time.
+
 ## Vim/Herdr navigation
 
 The `daniel.scatterer.nav-left`, `nav-down`, `nav-up`, and `nav-right` actions
@@ -105,6 +132,8 @@ herdr plugin action invoke daniel.scatterer.apply-layout
 herdr plugin action invoke daniel.scatterer.quick-start
 herdr plugin action invoke daniel.scatterer.pr-picker
 herdr plugin action invoke daniel.scatterer.lazygit
+herdr plugin action invoke daniel.scatterer.appearance-sync
+herdr plugin action invoke daniel.scatterer.appearance-install-launchd
 herdr plugin action invoke daniel.scatterer.nav-left
 ```
 
