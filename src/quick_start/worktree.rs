@@ -16,21 +16,23 @@ pub(super) fn create_worktree(
     socket_path: &Path,
     cwd: &Path,
     branch: &str,
+    base: Option<&str>,
     prompt: &str,
 ) -> Result<CreatedWorktree> {
     let cwd_string = cwd.to_string_lossy().to_string();
     let label = workspace_label(branch, prompt);
-    let result = socket_call(
-        socket_path,
-        "worktree.create",
-        json!({
-            "cwd": cwd_string,
-            "branch": branch,
-            "label": label,
-            "focus": true,
-        }),
-    )
-    .context("failed to create quick-start worktree")?;
+    let mut payload = json!({
+        "cwd": cwd_string,
+        "branch": branch,
+        "label": label,
+        "focus": true,
+    });
+    if let Some(base) = base.map(str::trim).filter(|base| !base.is_empty()) {
+        payload["base"] = json!(base);
+    }
+
+    let result = socket_call(socket_path, "worktree.create", payload)
+        .context("failed to create quick-start worktree")?;
 
     let workspace_id = first_string(
         &result,
@@ -81,6 +83,11 @@ pub(super) fn requested_workspace_branch(form: &QuickStartForm) -> Option<String
     (!branch.is_empty()).then_some(branch.to_string())
 }
 
+pub(super) fn base_for_form(form: &QuickStartForm) -> Option<String> {
+    let base = form.base.trim();
+    (!base.is_empty()).then_some(base.to_string())
+}
+
 pub(super) fn default_branch_for_prompt(prompt: &str) -> String {
     let slug = slugify(prompt, 48);
     format!("daniel/{slug}")
@@ -113,10 +120,24 @@ mod tests {
         let form = QuickStartForm {
             prompt: "anything".to_string(),
             branch: "feature/custom".to_string(),
+            base: String::new(),
             target: QuickStartTarget::Worktree,
             harness: Harness::Pi,
             model: None,
         };
         assert_eq!(branch_for_form(&form), "feature/custom");
+    }
+
+    #[test]
+    fn base_for_form_trims_input() {
+        let form = QuickStartForm {
+            prompt: "anything".to_string(),
+            branch: "feature/custom".to_string(),
+            base: "  parent/base  ".to_string(),
+            target: QuickStartTarget::Worktree,
+            harness: Harness::Pi,
+            model: None,
+        };
+        assert_eq!(base_for_form(&form).as_deref(), Some("parent/base"));
     }
 }

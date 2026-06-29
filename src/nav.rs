@@ -38,16 +38,14 @@ pub(crate) fn run_direction(direction: &str) -> Result<()> {
     let process_info = focused_process_info(&herdr, env_pane_id.as_deref()).unwrap_or_default();
     let pane_id = env_pane_id.or(process_info.pane_id);
 
-    if process_info.is_passthrough {
-        if let Some(pane_id) = pane_id {
-            return run_herdr(
-                &herdr,
-                &["pane", "send-keys", pane_id.as_str(), direction.key()],
-            )
-            .with_context(|| {
-                format!("failed to send {} to focused Vim/SSH pane", direction.key())
-            });
-        }
+    if process_info.is_passthrough
+        && let Some(pane_id) = pane_id
+    {
+        return run_herdr(
+            &herdr,
+            &["pane", "send-keys", pane_id.as_str(), direction.key()],
+        )
+        .with_context(|| format!("failed to send {} to focused Vim/SSH pane", direction.key()));
     }
 
     run_herdr(
