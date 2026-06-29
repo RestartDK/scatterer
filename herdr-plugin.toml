@@ -38,6 +38,27 @@ contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-lazygit"]
 
 [[actions]]
+id = "appearance-sync"
+title = "Sync appearance to Pi panes"
+description = "macOS-only temporary bridge that sends the current light/dark appearance to Pi child panes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "appearance", "sync"]
+
+[[actions]]
+id = "appearance-install-launchd"
+title = "Install macOS appearance watcher"
+description = "Install a LaunchAgent that syncs macOS light/dark changes to Pi child panes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "appearance", "install-launchd"]
+
+[[actions]]
+id = "appearance-uninstall-launchd"
+title = "Uninstall macOS appearance watcher"
+description = "Remove the Scatterer LaunchAgent that syncs macOS light/dark changes."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "appearance", "uninstall-launchd"]
+
+[[actions]]
 id = "nav-left"
 title = "Navigate left (Vim/Herdr)"
 description = "Move left across Vim/Neovim splits and Herdr panes."
