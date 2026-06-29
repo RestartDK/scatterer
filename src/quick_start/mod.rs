@@ -44,6 +44,7 @@ impl QuickStartTarget {
 pub(crate) struct QuickStartForm {
     pub(crate) prompt: String,
     pub(crate) branch: String,
+    pub(crate) base: String,
     pub(crate) target: QuickStartTarget,
     pub(crate) harness: Harness,
     pub(crate) model: Option<String>,
@@ -92,8 +93,9 @@ fn run_workspace_quick_start(
     form: QuickStartForm,
 ) -> Result<()> {
     let requested_branch = worktree::requested_workspace_branch(&form);
+    let requested_base = worktree::base_for_form(&form);
     if let Some(branch) = &requested_branch {
-        switch_or_create_branch(source_cwd, branch)?;
+        switch_or_create_branch(source_cwd, branch, requested_base.as_deref())?;
     }
 
     let (config, config_path) = load_project_config(source_cwd)?;
@@ -121,6 +123,9 @@ fn run_workspace_quick_start(
     if let Some(branch) = requested_branch.or_else(|| git_branch(source_cwd)) {
         println!("scatterer: branch {branch}");
     }
+    if let Some(base) = requested_base {
+        println!("scatterer: base {base}");
+    }
     println!("scatterer: path {}", source_cwd.display());
     print_config_paths(config_path);
     focus_workspace_later(&created.workspace_id);
@@ -135,7 +140,14 @@ fn run_worktree_quick_start(
 ) -> Result<()> {
     let (config, config_path) = load_project_config(source_cwd)?;
     let branch = worktree::branch_for_form(&form);
-    let created = worktree::create_worktree(socket_path, source_cwd, &branch, &form.prompt)?;
+    let base = worktree::base_for_form(&form);
+    let created = worktree::create_worktree(
+        socket_path,
+        source_cwd,
+        &branch,
+        base.as_deref(),
+        &form.prompt,
+    )?;
     run_worktree_setup(source_cwd, &created.path, &config)?;
     let pi_command = pi::pi_agent_command(&form, &branch);
 
@@ -154,6 +166,9 @@ fn run_worktree_quick_start(
         form.target.label()
     );
     println!("scatterer: branch {branch}");
+    if let Some(base) = base {
+        println!("scatterer: base {base}");
+    }
     println!("scatterer: path {}", created.path.display());
     print_config_paths(config_path);
     focus_workspace_later(&created.workspace_id);

@@ -19,7 +19,7 @@ use std::io;
 use std::time::Duration;
 
 const OVERLAY_WIDTH: u16 = 92;
-const OVERLAY_HEIGHT: u16 = 23;
+const OVERLAY_HEIGHT: u16 = 26;
 const PROMPT_PAGE_SCROLL: u16 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +27,7 @@ enum QuickField {
     Prompt,
     Target,
     Branch,
+    Base,
     Model,
 }
 
@@ -36,6 +37,7 @@ struct QuickStartApp {
     prompt_scroll: u16,
     prompt_follow_end: bool,
     branch: String,
+    base: String,
     target: QuickStartTarget,
     harness: Harness,
     models: Vec<String>,
@@ -51,6 +53,7 @@ impl QuickStartApp {
             prompt_scroll: 0,
             prompt_follow_end: true,
             branch: String::new(),
+            base: String::new(),
             target: QuickStartTarget::Workspace,
             harness: Harness::Pi,
             models: available_pi_models(),
@@ -115,7 +118,7 @@ fn handle_quick_start_key(
         return Ok(Some(None));
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
-        return Ok(app.to_form().map(Some));
+        return Ok(app.submit_form().map(Some));
     }
 
     match key.code {
@@ -126,7 +129,7 @@ fn handle_quick_start_key(
             app.insert_char('\n');
             Ok(None)
         }
-        KeyCode::Enter => Ok(app.to_form().map(Some)),
+        KeyCode::Enter => Ok(app.submit_form().map(Some)),
         KeyCode::Tab | KeyCode::Down => {
             app.next_field();
             Ok(None)
@@ -185,7 +188,8 @@ impl QuickStartApp {
         self.field = match self.field {
             QuickField::Prompt => QuickField::Target,
             QuickField::Target => QuickField::Branch,
-            QuickField::Branch => QuickField::Model,
+            QuickField::Branch => QuickField::Base,
+            QuickField::Base => QuickField::Model,
             QuickField::Model => QuickField::Prompt,
         };
     }
@@ -196,7 +200,8 @@ impl QuickStartApp {
             QuickField::Prompt => QuickField::Model,
             QuickField::Target => QuickField::Prompt,
             QuickField::Branch => QuickField::Target,
-            QuickField::Model => QuickField::Branch,
+            QuickField::Base => QuickField::Branch,
+            QuickField::Model => QuickField::Base,
         };
     }
 
@@ -209,6 +214,7 @@ impl QuickStartApp {
             }
             QuickField::Target => {}
             QuickField::Branch => self.branch.push(ch),
+            QuickField::Base => self.base.push(ch),
             QuickField::Model => {}
         }
     }
@@ -222,6 +228,7 @@ impl QuickStartApp {
             }
             QuickField::Target => {}
             QuickField::Branch => self.branch.push_str(&text.replace(['\n', '\r', '\t'], "-")),
+            QuickField::Base => self.base.push_str(&text.replace(['\n', '\r', '\t'], "-")),
             QuickField::Model => {}
         }
     }
@@ -236,6 +243,9 @@ impl QuickStartApp {
             QuickField::Target => {}
             QuickField::Branch => {
                 self.branch.pop();
+            }
+            QuickField::Base => {
+                self.base.pop();
             }
             QuickField::Model => {}
         }
@@ -302,16 +312,22 @@ impl QuickStartApp {
         }
     }
 
-    fn to_form(&mut self) -> Option<QuickStartForm> {
+    fn submit_form(&mut self) -> Option<QuickStartForm> {
         let prompt = self.prompt.trim().to_string();
         let branch = self.branch.trim().to_string();
+        let base = self.base.trim().to_string();
         if self.target == QuickStartTarget::Worktree && prompt.is_empty() && branch.is_empty() {
             self.error = Some("Branch or prompt is required for a worktree".to_string());
+            return None;
+        }
+        if self.target == QuickStartTarget::Workspace && branch.is_empty() && !base.is_empty() {
+            self.error = Some("Base requires a branch in workspace mode".to_string());
             return None;
         }
         Some(QuickStartForm {
             prompt,
             branch,
+            base,
             target: self.target,
             harness: self.harness,
             model: self.selected_model(),
@@ -329,6 +345,7 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         .margin(1)
         .constraints([
             Constraint::Min(6),
+            Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
@@ -367,6 +384,17 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         0,
     );
 
+    let base_placeholder = base_placeholder(app);
+    render_text_field(
+        frame,
+        chunks[3],
+        "Base ref".to_string(),
+        base_placeholder,
+        &app.base,
+        app.field == QuickField::Base,
+        0,
+    );
+
     let selected_model = app
         .models
         .get(app.model_index)
@@ -380,7 +408,7 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         Span::styled("←/→ or Space", Style::default().fg(Color::DarkGray)),
     ])])
     .block(field_block("Model", app.field == QuickField::Model));
-    frame.render_widget(model, chunks[3]);
+    frame.render_widget(model, chunks[4]);
 
     let footer_text = if let Some(error) = &app.error {
         Line::from(vec![Span::styled(
@@ -392,10 +420,11 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
     };
     frame.render_widget(
         Paragraph::new(footer_text).wrap(Wrap { trim: false }),
-        chunks[4],
+        chunks[5],
     );
 
-    if let Some(position) = active_cursor_position(app, chunks[0], chunks[1], chunks[2], chunks[3])
+    if let Some(position) =
+        active_cursor_position(app, chunks[0], chunks[1], chunks[2], chunks[3], chunks[4])
     {
         frame.set_cursor_position(position);
     }
@@ -415,6 +444,15 @@ fn branch_placeholder(app: &QuickStartApp) -> String {
         }
         QuickStartTarget::Worktree => {
             format!("optional; auto: {}", default_branch_for_prompt(&app.prompt))
+        }
+    }
+}
+
+fn base_placeholder(app: &QuickStartApp) -> &'static str {
+    match app.target {
+        QuickStartTarget::Workspace => "optional; used only when creating a new branch",
+        QuickStartTarget::Worktree => {
+            "optional; blank uses current checkout, or enter parent branch"
         }
     }
 }
@@ -476,6 +514,7 @@ fn active_cursor_position(
     prompt_area: Rect,
     target_area: Rect,
     branch_area: Rect,
+    base_area: Rect,
     model_area: Rect,
 ) -> Option<Position> {
     match app.field {
@@ -484,6 +523,7 @@ fn active_cursor_position(
         }
         QuickField::Target => fixed_field_cursor_position(target_area),
         QuickField::Branch => text_field_cursor_position(branch_area, &app.branch, 0),
+        QuickField::Base => text_field_cursor_position(base_area, &app.base, 0),
         QuickField::Model => fixed_field_cursor_position(model_area),
     }
 }

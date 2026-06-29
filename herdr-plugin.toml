@@ -1,6 +1,6 @@
 id = "daniel.scatterer"
 name = "Scatterer"
-version = "0.1.8"
+version = "0.1.9"
 min_herdr_version = "0.7.0"
 description = "Daniel's Herdr workflow/layout plugin."
 platforms = ["macos", "linux"]
@@ -19,7 +19,7 @@ command = ["bash", "scripts/scatterer.sh", "apply-layout"]
 [[actions]]
 id = "quick-start"
 title = "Quick start Pi workspace"
-description = "Open a workspace or worktree, optionally switch/create a branch, apply the Scatterer layout, and optionally start Pi with a prompt."
+description = "Open a workspace or worktree, optionally switch/create a branch from a base ref, apply the Scatterer layout, and optionally start Pi with a prompt."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
 

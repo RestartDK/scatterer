@@ -138,7 +138,7 @@ pub(super) fn pr_row_from_gh(
         .get("changedFiles")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let review = string_at(&value, &["reviewDecision"]).filter(|value| value != "");
+    let review = string_at(&value, &["reviewDecision"]).filter(|value| !value.is_empty());
     let head = string_at(&value, &["headRefName"]).unwrap_or_else(|| branch.to_string());
 
     Some(PrRow {

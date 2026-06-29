@@ -17,16 +17,20 @@ as a runner or git UI.
 
 The `daniel.scatterer.quick-start` action opens a Herdr overlay TUI. Optionally
 enter a multi-line Pi prompt, choose whether to open a normal workspace or create
-a new worktree, optionally enter a branch name, choose a Pi model from
-`pi --list-models`, and submit with `Enter`. Use `Shift+Enter` to add prompt
-lines.
+a new worktree, optionally enter a branch name and base ref, choose a Pi model
+from `pi --list-models`, and submit with `Enter`. Use `Shift+Enter` to add
+prompt lines.
 
 In `workspace` mode, an empty branch keeps the current branch; entering a branch
-switches to it or creates it before opening the workspace. In `worktree` mode,
-an empty branch uses `daniel/<prompt-slug>`, so either a prompt or branch is
-required. The branch name is also used as the worktree workspace name; when
-Scatterer starts Pi explicitly for a prompt/model selection, it uses the branch
-or current workspace name as the Pi session name. Scatterer then:
+switches to it or creates it before opening the workspace. If the branch is new,
+an optional base ref creates it from that ref instead of the current `HEAD`. In
+`worktree` mode, an empty branch uses `daniel/<prompt-slug>`, so either a prompt
+or branch is required. An optional base ref is passed to Herdr when creating the
+worktree; blank uses the source checkout's current ref. For stacked PRs, enter
+the child PR branch in `Branch` and the parent PR branch in `Base ref`. The
+branch name is also used as the worktree workspace name; when Scatterer starts Pi
+explicitly for a prompt/model selection, it uses the branch or current workspace
+name as the Pi session name. Scatterer then:
 
 1. creates a Herdr workspace, or creates a Git worktree and opens its workspace
 2. for new worktrees only, runs project worktree setup from merged Scatterer
