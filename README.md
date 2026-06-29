@@ -7,11 +7,18 @@ Personal Herdr workflow plugin.
 The `daniel.scatterer.apply-layout` action creates a new Herdr workspace/space
 from the currently focused pane's cwd, then uses Herdr's declarative
 `layout.apply` socket API to make an `agent` tab with `pi` on the left and
-`hunk` on the right.
+`hunk diff main` on the right.
 
 Repeated invocations create another workspace/space. It does not append tabs to
-the workspace you invoked it from. Project config can add extra layout tabs such
-as a runner or git UI.
+the workspace you invoked it from. Project config can override the Hunk command
+or add extra layout tabs such as a runner or git UI.
+
+Hunk theming is best configured through Hunk itself. `theme = "auto"` queries the
+terminal background and picks Hunk's light/dark defaults; `transparent_background
+= true` lets the terminal background show through. Hunk also has a `tokyo-night`
+dark theme, but not a matching Tokyo Night Day theme. Herdr itself supports
+`name = "terminal"` or `dark_name = "tokyo-night"` / `light_name =
+"tokyo-night-day"` in `~/.config/herdr/config.toml`.
 
 ## Quick start
 
@@ -222,7 +229,7 @@ direnv = true
 
 [layout]
 agent = "pi"
-hunk = "hunk"
+hunk = "hunk diff main"
 # Optional per-project tabs. Defaults do not include process-compose or lazygit.
 runner = "process-compose up"
 git = "lazygit"
