@@ -58,7 +58,7 @@ pub(crate) fn apply_scatterer_layout(
     );
     let agent = agent_override.unwrap_or(agent_default);
     let hunk = config.layout.hunk.as_deref().unwrap_or(
-        "if command -v hunk >/dev/null 2>&1; then hunk; else echo 'hunk not found on PATH'; fi",
+        "if command -v hunk >/dev/null 2>&1; then hunk diff main; else echo 'hunk not found on PATH'; fi",
     );
     let runner = optional_command(config.layout.runner.as_deref());
     let git = optional_command(config.layout.git.as_deref());

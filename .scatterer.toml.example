@@ -3,7 +3,7 @@
 agent = "pi"
 
 # Tab 1, right pane
-hunk = "hunk"
+hunk = "hunk diff main"
 
 # Tab 2
 runner = "process-compose up"
