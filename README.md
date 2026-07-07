@@ -7,7 +7,9 @@ Personal Herdr workflow plugin.
 The `daniel.scatterer.apply-layout` action creates a new Herdr workspace/space
 from the currently focused pane's cwd, then uses Herdr's declarative
 `layout.apply` socket API to make an `agent` tab with `pi` on the left and
-`hunk diff main` on the right.
+`hunk diff <parent-branch>... --watch` on the right. The parent branch comes
+from the quick-start base ref or saved Scatterer branch metadata when present,
+then falls back to the current GitHub PR base, then `main`.
 
 Repeated invocations create another workspace/space. It does not append tabs to
 the workspace you invoked it from. Project config can override the Hunk command
@@ -229,7 +231,8 @@ direnv = true
 
 [layout]
 agent = "pi"
-hunk = "hunk diff main"
+# Optional override; omitted default is `hunk diff <parent-branch>... --watch`.
+# hunk = "hunk diff main... --watch"
 # Optional per-project tabs. Defaults do not include process-compose or lazygit.
 runner = "process-compose up"
 git = "lazygit"

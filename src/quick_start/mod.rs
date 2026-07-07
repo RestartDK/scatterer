@@ -4,7 +4,7 @@ mod worktree;
 
 use crate::config::load_project_config;
 use crate::focus::focus_workspace_later;
-use crate::git::{git_branch, switch_or_create_branch};
+use crate::git::{git_branch, remember_parent_branch, switch_or_create_branch};
 use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
 use crate::layout::{apply_scatterer_layout, create_workspace};
 use crate::util::{non_empty_env, slugify};
@@ -96,6 +96,9 @@ fn run_workspace_quick_start(
     let requested_base = worktree::base_for_form(&form);
     if let Some(branch) = &requested_branch {
         switch_or_create_branch(source_cwd, branch, requested_base.as_deref())?;
+        if let Some(base) = requested_base.as_deref() {
+            remember_parent_branch(source_cwd, branch, base)?;
+        }
     }
 
     let (config, config_path) = load_project_config(source_cwd)?;
@@ -113,6 +116,7 @@ fn run_workspace_quick_start(
         source_cwd,
         &config,
         pi_command.as_deref(),
+        requested_base.as_deref(),
     )?;
 
     println!(
@@ -148,6 +152,9 @@ fn run_worktree_quick_start(
         base.as_deref(),
         &form.prompt,
     )?;
+    if let Some(parent) = base.as_deref() {
+        remember_parent_branch(&created.path, &branch, parent)?;
+    }
     run_worktree_setup(source_cwd, &created.path, &config)?;
     let pi_command = pi::pi_agent_command(&form, &branch);
 
@@ -158,6 +165,7 @@ fn run_worktree_quick_start(
         &created.path,
         &config,
         pi_command.as_deref(),
+        base.as_deref(),
     )?;
 
     println!(

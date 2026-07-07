@@ -2,8 +2,8 @@
 # Tab 1, left pane
 agent = "pi"
 
-# Tab 1, right pane
-hunk = "hunk diff main"
+# Tab 1, right pane. Omit for Scatterer's dynamic parent-branch default.
+# hunk = "hunk diff main... --watch"
 
 # Tab 2
 runner = "process-compose up"
