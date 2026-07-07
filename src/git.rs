@@ -13,12 +13,36 @@ pub(crate) fn git_branch(cwd: &Path) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch.is_empty() {
-        None
-    } else {
-        Some(branch)
+    non_empty_stdout(&output.stdout)
+}
+
+pub(crate) fn git_parent_branch(cwd: &Path) -> Option<String> {
+    let branch = git_branch(cwd)?;
+    configured_parent_branch(cwd, &branch).or_else(|| github_pr_base_branch(cwd))
+}
+
+pub(crate) fn remember_parent_branch(cwd: &Path, branch: &str, parent: &str) -> Result<()> {
+    let branch = branch.trim();
+    let parent = parent.trim();
+    if branch.is_empty() || parent.is_empty() {
+        return Ok(());
     }
+
+    let key = format!("branch.{branch}.scatterer-parent");
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["config", "--local", key.as_str(), parent])
+        .stdin(Stdio::null())
+        .status()
+        .with_context(|| format!("failed to remember parent branch '{parent}' for '{branch}'"))?;
+    if !status.success() {
+        return Err(anyhow!(
+            "git config failed while remembering parent branch '{parent}' for '{branch}'"
+        ));
+    }
+
+    Ok(())
 }
 
 pub(crate) fn switch_or_create_branch(cwd: &Path, branch: &str, base: Option<&str>) -> Result<()> {
@@ -92,12 +116,49 @@ pub(crate) fn git_root(cwd: &Path) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if root.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(root))
+    non_empty_stdout(&output.stdout).map(PathBuf::from)
+}
+
+fn configured_parent_branch(cwd: &Path, branch: &str) -> Option<String> {
+    let key = format!("branch.{branch}.scatterer-parent");
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["config", "--get", key.as_str()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
+    non_empty_stdout(&output.stdout)
+}
+
+fn github_pr_base_branch(cwd: &Path) -> Option<String> {
+    let output = Command::new("gh")
+        .current_dir(cwd)
+        .args([
+            "pr",
+            "view",
+            "--json",
+            "baseRefName",
+            "--jq",
+            ".baseRefName",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    non_empty_stdout(&output.stdout)
+}
+
+fn non_empty_stdout(stdout: &[u8]) -> Option<String> {
+    let value = String::from_utf8_lossy(stdout).trim().to_string();
+    if value.is_empty() { None } else { Some(value) }
 }
 
 #[cfg(test)]
@@ -167,5 +228,26 @@ mod tests {
         assert_eq!(git_branch(&repo.0).as_deref(), Some("child"));
         assert_eq!(git(&repo.0, &["rev-parse", "HEAD"]), parent_rev);
         assert_ne!(git(&repo.0, &["rev-parse", "HEAD"]), main_rev);
+    }
+
+    #[test]
+    fn git_parent_branch_uses_remembered_parent() {
+        let repo = temp_repo();
+        git(&repo.0, &["init", "-b", "main"]);
+        git(&repo.0, &["config", "user.email", "scatterer@example.test"]);
+        git(&repo.0, &["config", "user.name", "Scatterer Test"]);
+
+        fs::write(repo.0.join("file.txt"), "main\n").expect("write main file");
+        git(&repo.0, &["add", "."]);
+        git(&repo.0, &["commit", "-m", "initial"]);
+        git(&repo.0, &["switch", "-c", "feature/child"]);
+
+        remember_parent_branch(&repo.0, "feature/child", "feature/parent")
+            .expect("remember parent branch");
+
+        assert_eq!(
+            git_parent_branch(&repo.0).as_deref(),
+            Some("feature/parent")
+        );
     }
 }

@@ -1,8 +1,8 @@
 use crate::config::{ProjectConfig, load_project_config};
-use crate::git::git_branch;
+use crate::git::{git_branch, git_parent_branch};
 use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
 use crate::pane_env;
-use crate::util::first_string;
+use crate::util::{first_string, shell_quote};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -25,6 +25,7 @@ pub(crate) fn apply_layout() -> Result<()> {
         Some(&created.initial_tab_id),
         &source.cwd,
         &config,
+        None,
         None,
     )?;
 
@@ -51,15 +52,20 @@ pub(crate) fn apply_scatterer_layout(
     cwd: &Path,
     config: &ProjectConfig,
     agent_override: Option<&str>,
+    parent_branch_hint: Option<&str>,
 ) -> Result<()> {
     let cwd_string = cwd.to_string_lossy().to_string();
     let agent_default = config.layout.agent.as_deref().unwrap_or(
         "if command -v pi >/dev/null 2>&1; then pi; else echo 'pi not found on PATH'; fi",
     );
     let agent = agent_override.unwrap_or(agent_default);
-    let hunk = config.layout.hunk.as_deref().unwrap_or(
-        "if command -v hunk >/dev/null 2>&1; then hunk diff main; else echo 'hunk not found on PATH'; fi",
-    );
+    let computed_hunk_command;
+    let hunk = if let Some(hunk) = config.layout.hunk.as_deref() {
+        hunk
+    } else {
+        computed_hunk_command = default_hunk_command(cwd, parent_branch_hint);
+        computed_hunk_command.as_str()
+    };
     let runner = optional_command(config.layout.runner.as_deref());
     let git = optional_command(config.layout.git.as_deref());
 
@@ -175,6 +181,20 @@ fn optional_command(command: Option<&str>) -> Option<&str> {
     })
 }
 
+fn default_hunk_command(cwd: &Path, parent_branch_hint: Option<&str>) -> String {
+    let parent_branch = parent_branch_hint
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| git_parent_branch(cwd))
+        .unwrap_or_else(|| "main".to_string());
+
+    format!(
+        "if command -v hunk >/dev/null 2>&1; then hunk diff {}... --watch; else echo 'hunk not found on PATH'; fi",
+        shell_quote(&parent_branch)
+    )
+}
+
 fn apply_tab(
     socket_path: &Path,
     workspace_id: &str,
@@ -198,4 +218,16 @@ fn apply_tab(
     socket_call(socket_path, "layout.apply", Value::Object(params))
         .with_context(|| format!("failed to apply '{tab_label}' tab"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_hunk_command_uses_parent_hint_with_watch() {
+        let command = default_hunk_command(Path::new("."), Some("parent/branch"));
+
+        assert!(command.contains("hunk diff 'parent/branch'... --watch"));
+    }
 }
