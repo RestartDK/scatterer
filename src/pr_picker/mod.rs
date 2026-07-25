@@ -77,12 +77,6 @@ pub(crate) fn run() -> Result<()> {
     tui::run_pr_picker_tui()
 }
 
-pub(crate) fn refresh_metadata() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    agents::load_pr_rows(&socket_path)?;
-    Ok(())
-}
-
 fn pr_state_rank(state: PrState) -> u8 {
     match state {
         PrState::Open => 0,

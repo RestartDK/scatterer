@@ -1,6 +1,5 @@
 use anyhow::{Result, anyhow};
 
-mod agent_view;
 mod appearance;
 mod config;
 mod focus;
@@ -23,7 +22,6 @@ fn main() -> Result<()> {
         Some("appearance") => appearance::run(args),
         Some("appearance-sync") => appearance::run(["sync".to_string()].into_iter()),
         Some("appearance-watch") => appearance::run(["watch".to_string()].into_iter()),
-        Some("agent-view") => agent_view::run(args),
         Some("open-quick-start") => quick_start::open(),
         Some("quick-start") => quick_start::run(),
         Some("remove-flat-worktree") => quick_start::remove_flat_worktree(),

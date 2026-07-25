@@ -155,9 +155,9 @@ fn report_pr_metadata(socket_path: &Path, rows: &[PrRow]) {
             super::PrState::Closed => "closed",
         };
         let badge = format!(
-            "{} #{} {state}",
-            super::pr_state_icon(row.state),
-            row.number
+            "#{} {} {state}",
+            row.number,
+            super::pr_state_icon(row.state)
         );
         let _ = socket_call(
             socket_path,

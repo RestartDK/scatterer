@@ -23,29 +23,12 @@ description = "Open a workspace or grouped/top-level worktree, optionally switch
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
 
-[[startup]]
-command = ["bash", "scripts/scatterer.sh", "agent-view", "restore"]
-
 [[actions]]
 id = "pr-picker"
 title = "PR picker"
 description = "Show PRs associated with active Herdr agents and focus their workspaces."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-pr-picker"]
-
-[[actions]]
-id = "pr-agent-view-enable"
-title = "Show PR agents"
-description = "Filter Herdr's native Agents view to panes associated with pull requests."
-contexts = ["global"]
-command = ["bash", "scripts/scatterer.sh", "agent-view", "enable-pr"]
-
-[[actions]]
-id = "pr-agent-view-disable"
-title = "Reset Agent view"
-description = "Clear Scatterer's PR filter and restore Herdr's default Agents view."
-contexts = ["global"]
-command = ["bash", "scripts/scatterer.sh", "agent-view", "disable-pr"]
 
 [[actions]]
 id = "remove-flat-worktree"
