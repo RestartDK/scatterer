@@ -15,6 +15,20 @@ pub(super) enum PrState {
     Closed,
 }
 
+const PR_OPEN_ICON: &str = "\u{F407}";
+const PR_MERGED_ICON: &str = "\u{F419}";
+const PR_CLOSED_ICON: &str = "\u{F4DC}";
+const PR_DRAFT_ICON: &str = "\u{F4DD}";
+
+pub(super) fn pr_state_icon(state: PrState) -> &'static str {
+    match state {
+        PrState::Open => PR_OPEN_ICON,
+        PrState::Draft => PR_DRAFT_ICON,
+        PrState::Merged => PR_MERGED_ICON,
+        PrState::Closed => PR_CLOSED_ICON,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CheckState {
     Pass,
@@ -52,11 +66,10 @@ pub(crate) fn open() -> Result<()> {
         json!({
             "plugin_id": plugin_id,
             "entrypoint": "pr-picker",
-            "placement": "overlay",
-            "focus": true,
+            "placement": "popup",
         }),
     )
-    .context("failed to open Scatterer PR picker overlay")?;
+    .context("failed to open Scatterer PR picker popup")?;
     Ok(())
 }
 

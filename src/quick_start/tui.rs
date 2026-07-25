@@ -1,25 +1,20 @@
 use super::pi::available_pi_models;
 use super::worktree::default_branch_for_prompt;
 use super::{Harness, QuickStartForm, QuickStartTarget};
+use crate::terminal_session::TerminalSession;
 use anyhow::{Context, Result};
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use std::io;
 use std::time::Duration;
 
-const OVERLAY_WIDTH: u16 = 92;
-const OVERLAY_HEIGHT: u16 = 26;
 const PROMPT_PAGE_SCROLL: u16 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,23 +60,18 @@ impl QuickStartApp {
 }
 
 pub(super) fn run_quick_start_tui() -> Result<Option<QuickStartForm>> {
-    enable_raw_mode().context("failed to enable raw mode")?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen).context("failed to enter alternate screen")?;
-    let backend = CrosstermBackend::new(stdout);
+    let mut session = TerminalSession::enter(true)?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
     terminal.clear().context("failed to clear terminal")?;
 
     let result = run_quick_start_loop(&mut terminal);
-
-    let leave_result = execute!(terminal.backend_mut(), LeaveAlternateScreen)
-        .context("failed to leave alternate screen");
-    let raw_result = disable_raw_mode().context("failed to disable raw mode");
     terminal.show_cursor().ok();
+    drop(terminal);
+    let cleanup = session.finish();
 
     let form = result?;
-    leave_result?;
-    raw_result?;
+    cleanup?;
     Ok(form)
 }
 
@@ -120,11 +110,21 @@ fn handle_quick_start_key(
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
         return Ok(app.submit_form().map(Some));
     }
+    if app.field == QuickField::Prompt
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('j' | 'J'))
+    {
+        app.insert_char('\n');
+        return Ok(None);
+    }
 
     match key.code {
         KeyCode::Esc => Ok(Some(None)),
         KeyCode::Enter
-            if app.field == QuickField::Prompt && key.modifiers.contains(KeyModifiers::SHIFT) =>
+            if app.field == QuickField::Prompt
+                && key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) =>
         {
             app.insert_char('\n');
             Ok(None)
@@ -172,6 +172,17 @@ fn handle_quick_start_key(
         }
         KeyCode::Char(' ') if app.field == QuickField::Model => {
             app.next_model();
+            Ok(None)
+        }
+        KeyCode::Char(_)
+            if key.modifiers.intersects(
+                KeyModifiers::CONTROL
+                    | KeyModifiers::ALT
+                    | KeyModifiers::SUPER
+                    | KeyModifiers::HYPER
+                    | KeyModifiers::META,
+            ) =>
+        {
             Ok(None)
         }
         KeyCode::Char(ch) => {
@@ -275,14 +286,12 @@ impl QuickStartApp {
 
     fn next_target(&mut self) {
         self.error = None;
-        self.target = match self.target {
-            QuickStartTarget::Workspace => QuickStartTarget::Worktree,
-            QuickStartTarget::Worktree => QuickStartTarget::Workspace,
-        };
+        self.target = self.target.next();
     }
 
     fn previous_target(&mut self) {
-        self.next_target();
+        self.error = None;
+        self.target = self.target.previous();
     }
 
     fn next_model(&mut self) {
@@ -316,7 +325,7 @@ impl QuickStartApp {
         let prompt = self.prompt.trim().to_string();
         let branch = self.branch.trim().to_string();
         let base = self.base.trim().to_string();
-        if self.target == QuickStartTarget::Worktree && prompt.is_empty() && branch.is_empty() {
+        if self.target.creates_worktree() && prompt.is_empty() && branch.is_empty() {
             self.error = Some("Branch or prompt is required for a worktree".to_string());
             return None;
         }
@@ -336,10 +345,7 @@ impl QuickStartApp {
 }
 
 fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
-    let area = centered_rect(frame.area(), OVERLAY_WIDTH, OVERLAY_HEIGHT);
-    frame.render_widget(Clear, area);
-    frame.render_widget(Block::default().borders(Borders::ALL), area);
-
+    let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -359,7 +365,7 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         frame,
         chunks[0],
         prompt_title(prompt_scroll, prompt_max_scroll),
-        "Optional Pi prompt. Shift+Enter adds a new line.",
+        "Optional Pi prompt. Shift+Enter or Ctrl+J adds a new line.",
         &app.prompt,
         app.field == QuickField::Prompt,
         prompt_scroll,
@@ -416,7 +422,7 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )])
     } else {
-        Line::from("Enter submit · Shift+Enter newline · Tab/↑/↓ fields · PgUp/PgDn prompt scroll")
+        Line::from("Enter submit · Shift+Enter/Ctrl+J newline · Tab/↑/↓ fields · PgUp/PgDn scroll")
     };
     frame.render_widget(
         Paragraph::new(footer_text).wrap(Wrap { trim: false }),
@@ -433,7 +439,8 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
 fn target_label(target: QuickStartTarget) -> &'static str {
     match target {
         QuickStartTarget::Workspace => "workspace (current checkout)",
-        QuickStartTarget::Worktree => "worktree (new checkout)",
+        QuickStartTarget::Worktree => "worktree (Herdr group, indented)",
+        QuickStartTarget::FlatWorktree => "worktree (top-level space, not indented)",
     }
 }
 
@@ -442,7 +449,7 @@ fn branch_placeholder(app: &QuickStartApp) -> String {
         QuickStartTarget::Workspace => {
             "optional; blank keeps current branch, or enter branch to switch/create".to_string()
         }
-        QuickStartTarget::Worktree => {
+        QuickStartTarget::Worktree | QuickStartTarget::FlatWorktree => {
             format!("optional; auto: {}", default_branch_for_prompt(&app.prompt))
         }
     }
@@ -451,22 +458,9 @@ fn branch_placeholder(app: &QuickStartApp) -> String {
 fn base_placeholder(app: &QuickStartApp) -> &'static str {
     match app.target {
         QuickStartTarget::Workspace => "optional; used only when creating a new branch",
-        QuickStartTarget::Worktree => {
+        QuickStartTarget::Worktree | QuickStartTarget::FlatWorktree => {
             "optional; blank uses current checkout, or enter parent branch"
         }
-    }
-}
-
-fn centered_rect(container: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(container.width.saturating_sub(2)).max(20);
-    let height = height.min(container.height.saturating_sub(2)).max(10);
-    let x = container.x + container.width.saturating_sub(width) / 2;
-    let y = container.y + container.height.saturating_sub(height) / 2;
-    Rect {
-        x,
-        y,
-        width,
-        height,
     }
 }
 
@@ -485,11 +479,13 @@ fn render_text_field(
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        value.split('\n').map(Line::from).collect::<Vec<_>>()
+        wrapped_lines(value, area.width.saturating_sub(2))
+            .into_iter()
+            .map(Line::from)
+            .collect::<Vec<_>>()
     };
 
     let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
         .scroll((scroll, 0))
         .block(field_block(title, active));
     frame.render_widget(paragraph, area);
@@ -560,24 +556,123 @@ fn inner_area(area: Rect) -> Option<Rect> {
 }
 
 fn visual_cursor_offset(value: &str, width: u16) -> (u16, u16) {
-    let width = usize::from(width.max(1));
-    let mut row = 0usize;
-    let mut parts = value.split('\n').peekable();
+    let lines = wrapped_lines(value, width);
+    let row = lines.len().saturating_sub(1).min(usize::from(u16::MAX)) as u16;
+    let column = lines
+        .last()
+        .map(|line| Line::from(line.as_str()).width())
+        .unwrap_or_default()
+        .min(usize::from(u16::MAX)) as u16;
+    (row, column)
+}
 
-    while let Some(part) = parts.next() {
-        let chars = part.chars().count();
-        if parts.peek().is_none() {
-            let column = chars % width;
-            let row_offset = chars / width;
-            return (
-                row.saturating_add(row_offset).min(usize::from(u16::MAX)) as u16,
-                column.min(usize::from(u16::MAX)) as u16,
-            );
+fn wrapped_lines(value: &str, width: u16) -> Vec<String> {
+    let width = usize::from(width.max(1));
+    let mut wrapped = value
+        .split('\n')
+        .flat_map(|logical_line| wrap_logical_line(logical_line, width))
+        .collect::<Vec<_>>();
+
+    if !value.is_empty()
+        && !value.ends_with('\n')
+        && wrapped
+            .last()
+            .is_some_and(|line| display_width(line) == width)
+    {
+        wrapped.push(String::new());
+    }
+    if wrapped.is_empty() {
+        wrapped.push(String::new());
+    }
+    wrapped
+}
+
+fn wrap_logical_line(value: &str, width: usize) -> Vec<String> {
+    let mut tokens = Vec::<(bool, String)>::new();
+    for ch in value.chars() {
+        let is_whitespace = ch.is_whitespace();
+        if let Some((token_is_whitespace, token)) = tokens.last_mut()
+            && *token_is_whitespace == is_whitespace
+        {
+            token.push(ch);
+        } else {
+            tokens.push((is_whitespace, ch.to_string()));
         }
-        row = row.saturating_add(chars.max(1).div_ceil(width));
     }
 
-    (0, 0)
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut line_width = 0usize;
+    let mut pending_whitespace = String::new();
+    let mut saw_word = false;
+
+    for (is_whitespace, token) in tokens {
+        if is_whitespace {
+            pending_whitespace.push_str(&token);
+            continue;
+        }
+
+        if line.is_empty() && !saw_word {
+            append_hard_wrapped(
+                &pending_whitespace,
+                width,
+                &mut lines,
+                &mut line,
+                &mut line_width,
+            );
+        } else if !pending_whitespace.is_empty() {
+            let combined_width = line_width
+                .saturating_add(display_width(&pending_whitespace))
+                .saturating_add(display_width(&token));
+            if !line.is_empty() && combined_width > width {
+                lines.push(std::mem::take(&mut line));
+                line_width = 0;
+            } else {
+                append_hard_wrapped(
+                    &pending_whitespace,
+                    width,
+                    &mut lines,
+                    &mut line,
+                    &mut line_width,
+                );
+            }
+        }
+        pending_whitespace.clear();
+        append_hard_wrapped(&token, width, &mut lines, &mut line, &mut line_width);
+        saw_word = true;
+    }
+
+    append_hard_wrapped(
+        &pending_whitespace,
+        width,
+        &mut lines,
+        &mut line,
+        &mut line_width,
+    );
+    lines.push(line);
+    lines
+}
+
+fn append_hard_wrapped(
+    value: &str,
+    width: usize,
+    lines: &mut Vec<String>,
+    line: &mut String,
+    line_width: &mut usize,
+) {
+    for ch in value.chars() {
+        let char_width = Line::from(ch.to_string()).width();
+        if *line_width > 0 && line_width.saturating_add(char_width) > width {
+            lines.push(std::mem::take(line));
+            *line_width = 0;
+        }
+        line.push(ch);
+        *line_width = line_width.saturating_add(char_width);
+    }
+}
+
+fn display_width(value: &str) -> usize {
+    Line::from(value).width()
 }
 
 fn prompt_title(scroll: u16, max_scroll: u16) -> String {
@@ -602,21 +697,84 @@ fn prompt_max_scroll(value: &str, area: Rect) -> u16 {
 }
 
 fn prompt_visual_line_count(value: &str, width: u16) -> u16 {
-    let width = usize::from(width.max(1));
-    let visual_lines = if value.is_empty() {
-        1
-    } else {
-        value
-            .split('\n')
-            .map(|line| {
-                let chars = line.chars().count();
-                chars.max(1).div_ceil(width)
-            })
-            .sum::<usize>()
-    };
-    visual_lines.min(usize::from(u16::MAX)) as u16
+    wrapped_lines(value, width).len().min(usize::from(u16::MAX)) as u16
 }
 
 fn normalize_multiline_text(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\t', "    ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> QuickStartApp {
+        QuickStartApp {
+            prompt: String::new(),
+            prompt_scroll: 0,
+            prompt_follow_end: true,
+            branch: String::new(),
+            base: String::new(),
+            target: QuickStartTarget::Workspace,
+            harness: Harness::Pi,
+            models: vec!["default".to_string()],
+            model_index: 0,
+            field: QuickField::Prompt,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn modified_enter_and_control_j_insert_prompt_newlines() {
+        let mut app = test_app();
+        app.prompt.push_str("first");
+
+        handle_quick_start_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT))
+            .unwrap();
+        app.prompt.push_str("second");
+        handle_quick_start_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+        )
+        .unwrap();
+
+        assert_eq!(app.prompt, "first\nsecond\n");
+    }
+
+    #[test]
+    fn modified_character_shortcuts_do_not_insert_literal_characters() {
+        let mut app = test_app();
+
+        handle_quick_start_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT),
+        )
+        .unwrap();
+        handle_quick_start_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        )
+        .unwrap();
+
+        assert!(app.prompt.is_empty());
+    }
+
+    #[test]
+    fn wrapping_and_cursor_offsets_share_the_same_layout() {
+        assert_eq!(wrapped_lines("hello world", 5), vec!["hello", "world", ""]);
+        assert_eq!(visual_cursor_offset("hello world", 5), (2, 0));
+        assert_eq!(visual_cursor_offset("abcde", 5), (1, 0));
+        assert_eq!(visual_cursor_offset("abcde\nx", 5), (1, 1));
+        assert_eq!(visual_cursor_offset("ab界c", 4), (1, 1));
+    }
+
+    #[test]
+    fn pasted_newlines_and_tabs_are_normalized() {
+        assert_eq!(
+            normalize_multiline_text("one\r\ntwo\rthree\tfour"),
+            "one\ntwo\nthree    four"
+        );
+    }
 }
