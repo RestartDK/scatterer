@@ -156,10 +156,12 @@ y            copy PR URL
 q/Esc        close
 ```
 
-Refreshing the picker also reports `pr_url`, `pr_number`, and `pr_state` pane
-metadata. Invoke `daniel.scatterer.pr-agent-view-enable` to filter Herdr's native
-Agents view to those panes; `daniel.scatterer.pr-agent-view-disable` restores the
-default view. Scatterer saves the enabled preference under its plugin state and
+Refreshing the picker reports `pr_url`, `pr_number`, and `pr_state` pane
+metadata. It also reports exactly one styled-sidebar badge token for the current
+state: `pr_open`, `pr_draft`, `pr_merged`, or `pr_closed`. Each badge includes a
+Nerd Font PR icon, number, and state. Invoke
+`daniel.scatterer.pr-agent-view-enable` to filter Herdr's native Agents view to
+those panes; `daniel.scatterer.pr-agent-view-disable` restores the default view. Scatterer saves the enabled preference under its plugin state and
 restores it with a Herdr startup hook.
 
 ## Development install

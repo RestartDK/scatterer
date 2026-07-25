@@ -1,6 +1,6 @@
 use super::agents::load_pr_rows;
 use super::github::{OpenPrOutcome, open_pr_in_browser};
-use super::{CheckState, PrRow, PrState};
+use super::{CheckState, PrRow, PrState, pr_state_icon};
 use crate::focus::focus_pane;
 use crate::herdr::herdr_socket_path;
 use crate::terminal_session::TerminalSession;
@@ -435,23 +435,10 @@ fn row_style(selected: bool) -> Style {
     }
 }
 
-const PR_OPEN_ICON: &str = "\u{F407}";
-const PR_MERGED_ICON: &str = "\u{F419}";
-const PR_CLOSED_ICON: &str = "\u{F4DC}";
-const PR_DRAFT_ICON: &str = "\u{F4DD}";
 const COMMENT_ICON: &str = "\u{F442}";
 const CHECK_PASS_ICON: &str = "\u{F4A4}";
 const CHECK_PENDING_ICON: &str = "\u{F4AA}";
 const CHECK_FAIL_ICON: &str = "\u{F530}";
-
-fn pr_state_icon(state: PrState) -> &'static str {
-    match state {
-        PrState::Open => PR_OPEN_ICON,
-        PrState::Draft => PR_DRAFT_ICON,
-        PrState::Merged => PR_MERGED_ICON,
-        PrState::Closed => PR_CLOSED_ICON,
-    }
-}
 
 fn pr_state_label(state: PrState) -> &'static str {
     match state {

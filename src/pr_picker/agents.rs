@@ -135,6 +135,10 @@ fn clear_pr_metadata(socket_path: &Path, agents: &[serde_json::Value]) {
                     "pr_url": null,
                     "pr_number": null,
                     "pr_state": null,
+                    "pr_open": null,
+                    "pr_draft": null,
+                    "pr_merged": null,
+                    "pr_closed": null,
                 },
             }),
         );
@@ -150,6 +154,11 @@ fn report_pr_metadata(socket_path: &Path, rows: &[PrRow]) {
             super::PrState::Merged => "merged",
             super::PrState::Closed => "closed",
         };
+        let badge = format!(
+            "{} #{} {state}",
+            super::pr_state_icon(row.state),
+            row.number
+        );
         let _ = socket_call(
             socket_path,
             "pane.report_metadata",
@@ -160,6 +169,10 @@ fn report_pr_metadata(socket_path: &Path, rows: &[PrRow]) {
                     "pr_url": row.url,
                     "pr_number": format!("#{}", row.number),
                     "pr_state": state,
+                    "pr_open": (row.state == super::PrState::Open).then(|| badge.clone()),
+                    "pr_draft": (row.state == super::PrState::Draft).then(|| badge.clone()),
+                    "pr_merged": (row.state == super::PrState::Merged).then(|| badge.clone()),
+                    "pr_closed": (row.state == super::PrState::Closed).then(|| badge.clone()),
                 },
             }),
         );
