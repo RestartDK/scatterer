@@ -52,16 +52,21 @@ pub(crate) fn open() -> Result<()> {
         json!({
             "plugin_id": plugin_id,
             "entrypoint": "pr-picker",
-            "placement": "overlay",
-            "focus": true,
+            "placement": "popup",
         }),
     )
-    .context("failed to open Scatterer PR picker overlay")?;
+    .context("failed to open Scatterer PR picker popup")?;
     Ok(())
 }
 
 pub(crate) fn run() -> Result<()> {
     tui::run_pr_picker_tui()
+}
+
+pub(crate) fn refresh_metadata() -> Result<()> {
+    let socket_path = herdr_socket_path()?;
+    agents::load_pr_rows(&socket_path)?;
+    Ok(())
 }
 
 fn pr_state_rank(state: PrState) -> u8 {

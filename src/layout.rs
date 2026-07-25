@@ -13,6 +13,11 @@ pub(crate) struct CreatedWorkspace {
     pub(crate) initial_tab_id: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct AppliedLayout {
+    pub(crate) agent_pane_id: String,
+}
+
 pub(crate) fn apply_layout() -> Result<()> {
     let socket_path = herdr_socket_path()?;
     let source = resolve_invocation_source(&socket_path)?;
@@ -26,7 +31,7 @@ pub(crate) fn apply_layout() -> Result<()> {
         &source.cwd,
         &config,
         None,
-        None,
+        false,
     )?;
 
     println!(
@@ -51,14 +56,13 @@ pub(crate) fn apply_scatterer_layout(
     replace_tab_id: Option<&str>,
     cwd: &Path,
     config: &ProjectConfig,
-    agent_override: Option<&str>,
     parent_branch_hint: Option<&str>,
-) -> Result<()> {
+    defer_agent_start: bool,
+) -> Result<AppliedLayout> {
     let cwd_string = cwd.to_string_lossy().to_string();
-    let agent_default = config.layout.agent.as_deref().unwrap_or(
+    let agent = config.layout.agent.as_deref().unwrap_or(
         "if command -v pi >/dev/null 2>&1; then pi; else echo 'pi not found on PATH'; fi",
     );
-    let agent = agent_override.unwrap_or(agent_default);
     let computed_hunk_command;
     let hunk = if let Some(hunk) = config.layout.hunk.as_deref() {
         hunk
@@ -70,15 +74,22 @@ pub(crate) fn apply_scatterer_layout(
     let git = optional_command(config.layout.git.as_deref());
 
     let load_direnv = config.env.direnv_enabled();
+    let agent_pane = if defer_agent_start {
+        // Start an interactive shell first. Herdr's agent.start facade then
+        // validates that Pi becomes ready in this exact pane before prompting.
+        pane("pi", &cwd_string, "true", load_direnv)
+    } else {
+        pane("pi", &cwd_string, agent, load_direnv)
+    };
     let dev_root = json!({
         "type": "split",
         "direction": "right",
         "ratio": 0.58,
-        "first": pane("pi", &cwd_string, agent, load_direnv),
+        "first": agent_pane,
         "second": pane("hunk", &cwd_string, hunk, load_direnv),
     });
 
-    apply_tab(
+    let agent_layout = apply_tab(
         socket_path,
         workspace_id,
         replace_tab_id,
@@ -86,6 +97,9 @@ pub(crate) fn apply_scatterer_layout(
         dev_root,
         true,
     )?;
+    let agent_pane_id = pane_id_with_label(&agent_layout, "pi").ok_or_else(|| {
+        anyhow!("layout.apply response did not include the Scatterer agent pane: {agent_layout}")
+    })?;
     if let Some(runner) = runner {
         apply_tab(
             socket_path,
@@ -107,12 +121,20 @@ pub(crate) fn apply_scatterer_layout(
         )?;
     }
 
-    Ok(())
+    Ok(AppliedLayout { agent_pane_id })
 }
 
 pub(crate) fn create_workspace(socket_path: &Path, cwd: &Path) -> Result<CreatedWorkspace> {
-    let cwd_string = cwd.to_string_lossy().to_string();
     let label = workspace_label(cwd);
+    create_workspace_with_label(socket_path, cwd, &label)
+}
+
+pub(crate) fn create_workspace_with_label(
+    socket_path: &Path,
+    cwd: &Path,
+    label: &str,
+) -> Result<CreatedWorkspace> {
+    let cwd_string = cwd.to_string_lossy().to_string();
     let result = socket_call(
         socket_path,
         "workspace.create",
@@ -202,7 +224,7 @@ fn apply_tab(
     tab_label: &str,
     root: Value,
     focus: bool,
-) -> Result<()> {
+) -> Result<Value> {
     let mut params = serde_json::Map::new();
     if let Some(tab_id) = replace_tab_id {
         // `layout.apply` accepts either `tab_id` for replacement or
@@ -216,8 +238,27 @@ fn apply_tab(
     params.insert("root".to_string(), root);
 
     socket_call(socket_path, "layout.apply", Value::Object(params))
-        .with_context(|| format!("failed to apply '{tab_label}' tab"))?;
-    Ok(())
+        .with_context(|| format!("failed to apply '{tab_label}' tab"))
+}
+
+fn pane_id_with_label(result: &Value, expected_label: &str) -> Option<String> {
+    fn visit(node: &Value, expected_label: &str) -> Option<String> {
+        if node.get("type").and_then(Value::as_str) == Some("pane")
+            && node.get("label").and_then(Value::as_str) == Some(expected_label)
+        {
+            return node
+                .get("pane_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+        }
+        visit(node.get("first")?, expected_label)
+            .or_else(|| visit(node.get("second")?, expected_label))
+    }
+
+    result
+        .get("layout")
+        .and_then(|layout| layout.get("root"))
+        .and_then(|root| visit(root, expected_label))
 }
 
 #[cfg(test)]
@@ -229,5 +270,20 @@ mod tests {
         let command = default_hunk_command(Path::new("."), Some("parent/branch"));
 
         assert!(command.contains("hunk diff 'parent/branch'... --watch"));
+    }
+
+    #[test]
+    fn finds_labeled_agent_pane_in_applied_layout() {
+        let result = json!({
+            "layout": {
+                "root": {
+                    "type": "split",
+                    "first": { "type": "pane", "label": "pi", "pane_id": "w1:p2" },
+                    "second": { "type": "pane", "label": "hunk", "pane_id": "w1:p3" }
+                }
+            }
+        });
+
+        assert_eq!(pane_id_with_label(&result, "pi").as_deref(), Some("w1:p2"));
     }
 }

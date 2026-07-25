@@ -1,7 +1,7 @@
 id = "daniel.scatterer"
 name = "Scatterer"
-version = "0.1.10"
-min_herdr_version = "0.7.0"
+version = "0.2.0"
+min_herdr_version = "0.7.5"
 description = "Daniel's Herdr workflow/layout plugin."
 platforms = ["macos", "linux"]
 
@@ -19,9 +19,12 @@ command = ["bash", "scripts/scatterer.sh", "apply-layout"]
 [[actions]]
 id = "quick-start"
 title = "Quick start Pi workspace"
-description = "Open a workspace or worktree, optionally switch/create a branch from a base ref, apply the Scatterer layout, and optionally start Pi with a prompt."
+description = "Open a workspace or grouped/top-level worktree, optionally switch/create a branch from a base ref, apply the Scatterer layout, and optionally start Pi with a prompt."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
+
+[[startup]]
+command = ["bash", "scripts/scatterer.sh", "agent-view", "restore"]
 
 [[actions]]
 id = "pr-picker"
@@ -29,6 +32,27 @@ title = "PR picker"
 description = "Show PRs associated with active Herdr agents and focus their workspaces."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-pr-picker"]
+
+[[actions]]
+id = "pr-agent-view-enable"
+title = "Show PR agents"
+description = "Filter Herdr's native Agents view to panes associated with pull requests."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "agent-view", "enable-pr"]
+
+[[actions]]
+id = "pr-agent-view-disable"
+title = "Reset Agent view"
+description = "Clear Scatterer's PR filter and restore Herdr's default Agents view."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "agent-view", "disable-pr"]
+
+[[actions]]
+id = "remove-flat-worktree"
+title = "Remove top-level worktree"
+description = "Remove the current top-level worktree created by Scatterer and close its workspace."
+contexts = ["global"]
+command = ["bash", "scripts/scatterer.sh", "remove-flat-worktree"]
 
 [[actions]]
 id = "lazygit"
@@ -89,13 +113,17 @@ command = ["bash", "scripts/scatterer.sh", "nav", "right"]
 [[panes]]
 id = "quick-start"
 title = "Quick start"
-placement = "overlay"
+placement = "popup"
+width = "85%"
+height = "85%"
 command = ["bash", "scripts/scatterer.sh", "quick-start"]
 
 [[panes]]
 id = "pr-picker"
 title = "PRs"
-placement = "overlay"
+placement = "popup"
+width = "85%"
+height = "80%"
 command = ["bash", "scripts/scatterer.sh", "pr-picker"]
 
 [[panes]]

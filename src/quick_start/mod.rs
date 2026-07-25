@@ -3,7 +3,6 @@ mod tui;
 mod worktree;
 
 use crate::config::load_project_config;
-use crate::focus::focus_workspace_later;
 use crate::git::{git_branch, remember_parent_branch, switch_or_create_branch};
 use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
 use crate::layout::{apply_scatterer_layout, create_workspace};
@@ -29,13 +28,39 @@ impl Harness {
 pub(crate) enum QuickStartTarget {
     Workspace,
     Worktree,
+    FlatWorktree,
 }
 
 impl QuickStartTarget {
     pub(crate) fn label(self) -> &'static str {
         match self {
             QuickStartTarget::Workspace => "workspace",
-            QuickStartTarget::Worktree => "worktree",
+            QuickStartTarget::Worktree => "grouped worktree",
+            QuickStartTarget::FlatWorktree => "top-level worktree",
+        }
+    }
+
+    pub(crate) fn creates_worktree(self) -> bool {
+        matches!(self, Self::Worktree | Self::FlatWorktree)
+    }
+
+    pub(crate) fn groups_worktree(self) -> bool {
+        self == Self::Worktree
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Workspace => Self::Worktree,
+            Self::Worktree => Self::FlatWorktree,
+            Self::FlatWorktree => Self::Workspace,
+        }
+    }
+
+    pub(crate) fn previous(self) -> Self {
+        match self {
+            Self::Workspace => Self::FlatWorktree,
+            Self::Worktree => Self::Workspace,
+            Self::FlatWorktree => Self::Worktree,
         }
     }
 }
@@ -61,15 +86,18 @@ pub(crate) fn open() -> Result<()> {
         json!({
             "plugin_id": plugin_id,
             "entrypoint": "quick-start",
-            "placement": "overlay",
-            "focus": true,
+            "placement": "popup",
             "env": {
                 "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
             },
         }),
     )
-    .context("failed to open Scatterer quick-start overlay")?;
+    .context("failed to open Scatterer quick-start popup")?;
     Ok(())
+}
+
+pub(crate) fn remove_flat_worktree() -> Result<()> {
+    worktree::remove_current_flat_worktree()
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -83,7 +111,9 @@ pub(crate) fn run() -> Result<()> {
 
     match form.target {
         QuickStartTarget::Workspace => run_workspace_quick_start(&socket_path, &source.cwd, form),
-        QuickStartTarget::Worktree => run_worktree_quick_start(&socket_path, &source.cwd, form),
+        QuickStartTarget::Worktree | QuickStartTarget::FlatWorktree => {
+            run_worktree_quick_start(&socket_path, &source.cwd, form)
+        }
     }
 }
 
@@ -107,16 +137,21 @@ fn run_workspace_quick_start(
         .clone()
         .or_else(|| git_branch(source_cwd))
         .unwrap_or_else(|| quick_start_name(&form.prompt));
-    let pi_command = pi::pi_agent_command(&form, &session_name);
-
-    apply_scatterer_layout(
+    let layout = apply_scatterer_layout(
         socket_path,
         &created.workspace_id,
         Some(&created.initial_tab_id),
         source_cwd,
         &config,
-        pi_command.as_deref(),
         requested_base.as_deref(),
+        true,
+    )?;
+    pi::start_pi_agent(
+        socket_path,
+        &layout.agent_pane_id,
+        &created.workspace_id,
+        &form,
+        &session_name,
     )?;
 
     println!(
@@ -132,7 +167,6 @@ fn run_workspace_quick_start(
     }
     println!("scatterer: path {}", source_cwd.display());
     print_config_paths(config_path);
-    focus_workspace_later(&created.workspace_id);
 
     Ok(())
 }
@@ -151,21 +185,27 @@ fn run_worktree_quick_start(
         &branch,
         base.as_deref(),
         &form.prompt,
+        form.target.groups_worktree(),
     )?;
     if let Some(parent) = base.as_deref() {
         remember_parent_branch(&created.path, &branch, parent)?;
     }
     run_worktree_setup(source_cwd, &created.path, &config)?;
-    let pi_command = pi::pi_agent_command(&form, &branch);
-
-    apply_scatterer_layout(
+    let layout = apply_scatterer_layout(
         socket_path,
         &created.workspace_id,
         created.initial_tab_id.as_deref(),
         &created.path,
         &config,
-        pi_command.as_deref(),
         base.as_deref(),
+        true,
+    )?;
+    pi::start_pi_agent(
+        socket_path,
+        &layout.agent_pane_id,
+        &created.workspace_id,
+        &form,
+        &branch,
     )?;
 
     println!(
@@ -179,7 +219,6 @@ fn run_worktree_quick_start(
     }
     println!("scatterer: path {}", created.path.display());
     print_config_paths(config_path);
-    focus_workspace_later(&created.workspace_id);
 
     Ok(())
 }
@@ -193,4 +232,33 @@ fn print_config_paths(config_path: Vec<std::path::PathBuf>) {
 pub(crate) fn quick_start_name(prompt: &str) -> String {
     let slug = slugify(prompt, 42);
     format!("quick {slug}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QuickStartTarget;
+
+    #[test]
+    fn quick_start_targets_cycle_in_both_directions() {
+        assert_eq!(
+            QuickStartTarget::Workspace.next(),
+            QuickStartTarget::Worktree
+        );
+        assert_eq!(
+            QuickStartTarget::Worktree.next(),
+            QuickStartTarget::FlatWorktree
+        );
+        assert_eq!(
+            QuickStartTarget::FlatWorktree.next(),
+            QuickStartTarget::Workspace
+        );
+        assert_eq!(
+            QuickStartTarget::Workspace.previous(),
+            QuickStartTarget::FlatWorktree
+        );
+        assert_eq!(
+            QuickStartTarget::FlatWorktree.previous(),
+            QuickStartTarget::Worktree
+        );
+    }
 }

@@ -1,22 +1,19 @@
 use super::agents::load_pr_rows;
 use super::github::{OpenPrOutcome, open_pr_in_browser};
 use super::{CheckState, PrRow, PrState};
-use crate::focus::focus_pane_later;
+use crate::focus::focus_pane;
 use crate::herdr::herdr_socket_path;
+use crate::terminal_session::TerminalSession;
 use crate::util::{command_exists, copy_to_terminal_clipboard, debug_log, is_ssh_session};
 use anyhow::{Context, Result};
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
@@ -81,26 +78,25 @@ enum PrPickerAction {
 
 pub(super) fn run_pr_picker_tui() -> Result<()> {
     debug_log("run_pr_picker_tui start");
-    enable_raw_mode().context("failed to enable raw mode")?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen).context("failed to enter alternate screen")?;
-    let backend = CrosstermBackend::new(stdout);
+    let mut session = TerminalSession::enter(false)?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
     terminal.clear().context("failed to clear terminal")?;
 
     let result = run_pr_picker_loop(&mut terminal);
+    terminal.show_cursor().ok();
+    drop(terminal);
+    let cleanup = session.finish();
 
     // Always act on the selected PR even if terminal cleanup reports an error
-    // while the overlay pane is closing.
+    // while the popup is closing.
     let action = result?;
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-    let _ = disable_raw_mode();
-    terminal.show_cursor().ok();
+    cleanup?;
 
     debug_log(&format!("run_pr_picker_tui action={action:?}"));
     if let Some(action) = action {
         match action {
-            PrPickerAction::Focus(row) => focus_pane_later(&row.workspace_id, &row.pane_id),
+            PrPickerAction::Focus(row) => focus_pane(&row.workspace_id, &row.pane_id)?,
         }
     }
 
@@ -196,11 +192,7 @@ fn run_pr_picker_loop(
 }
 
 fn draw_pr_picker(frame: &mut Frame<'_>, app: &mut PrPickerApp) {
-    let height = (app.rows.len() as u16).saturating_add(12).clamp(17, 30);
-    let area = centered_rect(frame.area(), 122, height);
-    frame.render_widget(Clear, area);
-    frame.render_widget(Block::default().borders(Borders::ALL), area);
-
+    let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -575,17 +567,4 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
             .context("clipboard command failed, terminal copy failed")?;
     }
     Ok(())
-}
-
-fn centered_rect(container: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(container.width.saturating_sub(2)).max(20);
-    let height = height.min(container.height.saturating_sub(2)).max(8);
-    let x = container.x + container.width.saturating_sub(width) / 2;
-    let y = container.y + container.height.saturating_sub(height) / 2;
-    Rect {
-        x,
-        y,
-        width,
-        height,
-    }
 }

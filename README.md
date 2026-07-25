@@ -1,6 +1,6 @@
 # Scatterer
 
-Personal Herdr workflow plugin.
+Personal Herdr workflow plugin. Scatterer 0.2.0 requires Herdr 0.7.5 or newer.
 
 ## Default layout
 
@@ -24,31 +24,53 @@ dark theme, but not a matching Tokyo Night Day theme. Herdr itself supports
 
 ## Quick start
 
-The `daniel.scatterer.quick-start` action opens a Herdr overlay TUI. Optionally
-enter a multi-line Pi prompt, choose whether to open a normal workspace or create
-a new worktree, optionally enter a branch name and base ref, choose a Pi model
-from `pi --list-models`, and submit with `Enter`. Use `Shift+Enter` to add
-prompt lines.
+The `daniel.scatterer.quick-start` action opens a Herdr popup TUI. Optionally
+enter a multi-line Pi prompt, choose one of three workspace modes, optionally
+enter a branch name and base ref, choose a Pi model from `pi --list-models`, and
+submit with `Enter`. Use `Shift+Enter` or `Ctrl+J` to add prompt lines. The
+modes are:
+
+- `workspace (current checkout)` — opens another workspace for the current
+  checkout, optionally switching or creating its branch first
+- `worktree (Herdr group, indented)` — keeps Herdr's normal managed worktree
+  behavior and displays the new workspace under the source repository
+- `worktree (top-level space, not indented)` — creates the same Git worktree in
+  Herdr's configured worktree directory, but reopens it as an ordinary top-level
+  workspace without Herdr grouping provenance
+
+Use Left/Right or Space while the `Mode` field is active to change the behavior
+for that quick-start invocation.
 
 In `workspace` mode, an empty branch keeps the current branch; entering a branch
 switches to it or creates it before opening the workspace. If the branch is new,
 an optional base ref creates it from that ref instead of the current `HEAD`. In
-`worktree` mode, an empty branch uses `daniel/<prompt-slug>`, so either a prompt
-or branch is required. An optional base ref is passed to Herdr when creating the
-worktree; blank uses the source checkout's current ref. For stacked PRs, enter
-the child PR branch in `Branch` and the parent PR branch in `Base ref`. The
-branch name is also used as the worktree workspace name; when Scatterer starts Pi
-explicitly for a prompt/model selection, it uses the branch or current workspace
-name as the Pi session name. Scatterer then:
+either worktree mode, an empty branch uses `daniel/<prompt-slug>`, so either a
+prompt or branch is required. An optional base ref is passed to Herdr when
+creating the worktree; blank uses the source checkout's current ref. For stacked
+PRs, enter the child PR branch in `Branch` and the parent PR branch in `Base
+ref`. The branch name is also used as the worktree workspace name; when Scatterer
+starts Pi explicitly for a prompt/model selection, it uses the branch or current
+workspace name as the Pi session name. Scatterer then:
 
-1. creates a Herdr workspace, or creates a Git worktree and opens its workspace
+1. creates a Herdr workspace, or creates a Git worktree and opens either a
+   grouped or top-level workspace for it
 2. for new worktrees only, runs project worktree setup from merged Scatterer
    config, `.herdr/setup.json`, and executable `.herdr/setup-worktree.sh` /
    `.herdr/post-worktree-create.sh` hooks when present
 3. applies the Scatterer layout in the workspace
-4. starts Pi with the entered prompt as Pi's initial message when a prompt is
-   present; if the prompt is empty, the workspace opens without an initial agent
-   message
+4. starts Pi through Herdr's live-agent facade, waits for it to become ready,
+   and atomically submits the entered multiline prompt when present
+
+For top-level mode, Scatterer lets Herdr create the checkout first so the path
+still honors `[worktrees].directory` (for example
+`~/.herdr/worktrees/<repo>/<branch-slug>`). It then calls `workspace.close` on
+the temporary grouped workspace—this does not remove the checkout—and opens the
+same path with `workspace.create`. The final workspace is a real Git worktree but
+is not indented. Scatterer records these checkouts in its Herdr plugin state.
+Invoke `daniel.scatterer.remove-flat-worktree` from inside one to remove a clean
+checkout safely and close its workspace; the branch is retained. Dirty
+worktrees are refused. Avoid Herdr's `Open worktree` action if you do not want a
+top-level checkout grouped again.
 
 Layout pane commands import `direnv export bash` before starting so tools like Pi,
 hunk, and any project-configured runner/git commands inherit the workspace's
@@ -59,12 +81,10 @@ environment and disables direnv hooks in the fallback shell so the same `.envrc`
 error does not repeat. Set `[env] direnv = false` in Scatterer config to disable
 direnv per project.
 
-Pi supports this directly via its CLI: `pi [messages...]` starts interactive Pi
-with an initial prompt. When a prompt or non-default model is selected, Scatterer runs:
-
-```sh
-pi --name "<branch-or-session>" [--model "provider/model"] ["<prompt>"]
-```
+Scatterer starts Pi in the layout's shell pane with Herdr's `agent.start` API,
+passing `--name "<branch-or-session>"` and an optional `--model`. It then uses
+`agent.prompt` for the initial message, avoiding shell quoting and preserving
+multiline text atomically.
 
 ## Lazygit overlay
 
@@ -117,8 +137,8 @@ when the current Neovim window does not change.
 
 ## PR picker
 
-The `daniel.scatterer.pr-picker` action opens the same compact overlay style and
-lists PRs attached to active Herdr agents. It scans active agents, finds their
+The `daniel.scatterer.pr-picker` action opens a compact Herdr popup and lists
+PRs attached to active Herdr agents. It scans active agents, finds their
 current worktree/branch, resolves the matching GitHub PR with `gh`, and shows:
 
 - Nerd Font PR state icon: open, draft, merged, or closed
@@ -136,14 +156,28 @@ y            copy PR URL
 q/Esc        close
 ```
 
+Refreshing the picker also reports `pr_url`, `pr_number`, and `pr_state` pane
+metadata. Invoke `daniel.scatterer.pr-agent-view-enable` to filter Herdr's native
+Agents view to those panes; `daniel.scatterer.pr-agent-view-disable` restores the
+default view. Scatterer saves the enabled preference under its plugin state and
+restores it with a Herdr startup hook.
+
 ## Development install
+
+A Nix development shell supplies Rust, Clippy, rustfmt, pkg-config, and Darwin's
+`libiconv` linkage:
 
 ```sh
 cd ~/Projects/scatterer
+nix develop
+cargo test --locked
 herdr plugin link .
 herdr plugin action invoke daniel.scatterer.apply-layout
 herdr plugin action invoke daniel.scatterer.quick-start
 herdr plugin action invoke daniel.scatterer.pr-picker
+herdr plugin action invoke daniel.scatterer.pr-agent-view-enable
+herdr plugin action invoke daniel.scatterer.pr-agent-view-disable
+herdr plugin action invoke daniel.scatterer.remove-flat-worktree
 herdr plugin action invoke daniel.scatterer.lazygit
 herdr plugin action invoke daniel.scatterer.appearance-sync
 herdr plugin action invoke daniel.scatterer.appearance-install-launchd

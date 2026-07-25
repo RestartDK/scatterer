@@ -165,7 +165,7 @@ fn non_empty_stdout(stdout: &[u8]) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     struct TempRepo(PathBuf);
 
@@ -176,10 +176,8 @@ mod tests {
     }
 
     fn temp_repo() -> TempRepo {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock before epoch")
-            .as_nanos();
+        static NEXT_TEMP_REPO: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT_TEMP_REPO.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
             "scatterer-git-test-{}-{unique}",
             std::process::id()
