@@ -2,13 +2,14 @@ use super::pi::available_pi_models;
 use super::worktree::default_branch_for_prompt;
 use super::{Harness, QuickStartForm, QuickStartTarget};
 use crate::terminal_session::TerminalSession;
+use crate::theme::PickerPalette;
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
@@ -26,8 +27,15 @@ enum QuickField {
     Model,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FieldVisualState {
+    active: bool,
+    scroll: u16,
+}
+
 #[derive(Debug)]
 struct QuickStartApp {
+    palette: PickerPalette,
     prompt: String,
     prompt_scroll: u16,
     prompt_follow_end: bool,
@@ -44,6 +52,7 @@ struct QuickStartApp {
 impl QuickStartApp {
     fn new() -> Self {
         Self {
+            palette: PickerPalette::load(),
             prompt: String::new(),
             prompt_scroll: 0,
             prompt_follow_end: true,
@@ -346,6 +355,10 @@ impl QuickStartApp {
 
 fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
     let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().bg(app.palette.panel_bg)),
+        area,
+    );
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -367,16 +380,27 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         prompt_title(prompt_scroll, prompt_max_scroll),
         "Optional Pi prompt. Shift+Enter or Ctrl+J adds a new line.",
         &app.prompt,
-        app.field == QuickField::Prompt,
-        prompt_scroll,
+        FieldVisualState {
+            active: app.field == QuickField::Prompt,
+            scroll: prompt_scroll,
+        },
+        &app.palette,
     );
 
     let target = Paragraph::new(vec![Line::from(vec![
-        Span::styled(target_label(app.target), Style::default().fg(Color::White)),
+        Span::styled(
+            target_label(app.target),
+            Style::default().fg(app.palette.text),
+        ),
         Span::raw("  "),
-        Span::styled("←/→ or Space", Style::default().fg(Color::DarkGray)),
+        Span::styled("←/→ or Space", Style::default().fg(app.palette.overlay0)),
     ])])
-    .block(field_block("Mode", app.field == QuickField::Target));
+    .style(Style::default().bg(app.palette.panel_bg))
+    .block(field_block(
+        "Mode",
+        app.field == QuickField::Target,
+        &app.palette,
+    ));
     frame.render_widget(target, chunks[1]);
 
     let branch_placeholder = branch_placeholder(app);
@@ -386,8 +410,11 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         "Branch".to_string(),
         &branch_placeholder,
         &app.branch,
-        app.field == QuickField::Branch,
-        0,
+        FieldVisualState {
+            active: app.field == QuickField::Branch,
+            scroll: 0,
+        },
+        &app.palette,
     );
 
     let base_placeholder = base_placeholder(app);
@@ -397,8 +424,11 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         "Base ref".to_string(),
         base_placeholder,
         &app.base,
-        app.field == QuickField::Base,
-        0,
+        FieldVisualState {
+            active: app.field == QuickField::Base,
+            scroll: 0,
+        },
+        &app.palette,
     );
 
     let selected_model = app
@@ -407,25 +437,38 @@ fn draw_quick_start(frame: &mut Frame<'_>, app: &mut QuickStartApp) {
         .map(String::as_str)
         .unwrap_or("default");
     let model = Paragraph::new(vec![Line::from(vec![
-        Span::styled("pi", Style::default().fg(Color::Green)),
+        Span::styled("pi", Style::default().fg(app.palette.green)),
         Span::raw("  "),
-        Span::styled(selected_model, Style::default().fg(Color::White)),
+        Span::styled(selected_model, Style::default().fg(app.palette.text)),
         Span::raw("  "),
-        Span::styled("←/→ or Space", Style::default().fg(Color::DarkGray)),
+        Span::styled("←/→ or Space", Style::default().fg(app.palette.overlay0)),
     ])])
-    .block(field_block("Model", app.field == QuickField::Model));
+    .style(Style::default().bg(app.palette.panel_bg))
+    .block(field_block(
+        "Model",
+        app.field == QuickField::Model,
+        &app.palette,
+    ));
     frame.render_widget(model, chunks[4]);
 
     let footer_text = if let Some(error) = &app.error {
         Line::from(vec![Span::styled(
             error,
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(app.palette.red)
+                .add_modifier(Modifier::BOLD),
         )])
     } else {
         Line::from("Enter submit · Shift+Enter/Ctrl+J newline · Tab/↑/↓ fields · PgUp/PgDn scroll")
     };
     frame.render_widget(
-        Paragraph::new(footer_text).wrap(Wrap { trim: false }),
+        Paragraph::new(footer_text)
+            .style(
+                Style::default()
+                    .fg(app.palette.subtext0)
+                    .bg(app.palette.panel_bg),
+            )
+            .wrap(Wrap { trim: false }),
         chunks[5],
     );
 
@@ -470,13 +513,13 @@ fn render_text_field(
     title: String,
     placeholder: &str,
     value: &str,
-    active: bool,
-    scroll: u16,
+    state: FieldVisualState,
+    palette: &PickerPalette,
 ) {
     let lines = if value.is_empty() {
         vec![Line::from(Span::styled(
             placeholder.to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette.overlay0),
         ))]
     } else {
         wrapped_lines(value, area.width.saturating_sub(2))
@@ -486,23 +529,25 @@ fn render_text_field(
     };
 
     let paragraph = Paragraph::new(lines)
-        .scroll((scroll, 0))
-        .block(field_block(title, active));
+        .style(Style::default().fg(palette.text).bg(palette.panel_bg))
+        .scroll((state.scroll, 0))
+        .block(field_block(title, state.active, palette));
     frame.render_widget(paragraph, area);
 }
 
-fn field_block(title: impl Into<String>, active: bool) -> Block<'static> {
+fn field_block(title: impl Into<String>, active: bool, palette: &PickerPalette) -> Block<'static> {
     let style = if active {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(palette.accent)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(palette.overlay0)
     };
     Block::default()
         .title(title.into())
         .borders(Borders::ALL)
         .border_style(style)
+        .style(Style::default().bg(palette.panel_bg))
 }
 
 fn active_cursor_position(
@@ -712,6 +757,7 @@ mod tests {
 
     fn test_app() -> QuickStartApp {
         QuickStartApp {
+            palette: PickerPalette::load(),
             prompt: String::new(),
             prompt_scroll: 0,
             prompt_follow_end: true,

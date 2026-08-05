@@ -4,6 +4,7 @@ use super::{CheckState, PrRow, PrState, pr_state_icon};
 use crate::focus::focus_pane;
 use crate::herdr::herdr_socket_path;
 use crate::terminal_session::TerminalSession;
+use crate::theme::PickerPalette;
 use crate::util::{command_exists, copy_to_terminal_clipboard, debug_log, is_ssh_session};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -21,6 +22,7 @@ use std::time::Duration;
 
 #[derive(Debug)]
 struct PrPickerApp {
+    palette: PickerPalette,
     rows: Vec<PrRow>,
     selected: usize,
     scroll: usize,
@@ -117,6 +119,7 @@ fn run_pr_picker_loop(
     };
     debug_log(&format!("pr picker loaded rows={}", rows.len()));
     let mut app = PrPickerApp {
+        palette: PickerPalette::load(),
         rows,
         selected: 0,
         scroll: 0,
@@ -193,6 +196,10 @@ fn run_pr_picker_loop(
 
 fn draw_pr_picker(frame: &mut Frame<'_>, app: &mut PrPickerApp) {
     let area = frame.area();
+    frame.render_widget(
+        Block::default().style(Style::default().bg(app.palette.panel_bg)),
+        area,
+    );
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
@@ -207,7 +214,7 @@ fn draw_pr_picker(frame: &mut Frame<'_>, app: &mut PrPickerApp) {
     render_header(frame, chunks[0], app);
     render_list(frame, chunks[1], app);
     render_details(frame, chunks[2], app);
-    render_footer(frame, chunks[3]);
+    render_footer(frame, chunks[3], &app.palette);
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &PrPickerApp) {
@@ -226,17 +233,17 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &PrPickerApp) {
             Span::styled(
                 "Pull requests",
                 Style::default()
-                    .fg(Color::White)
+                    .fg(app.palette.text)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("  {selected}{ssh_hint}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(app.palette.overlay0),
             ),
         ]),
         Line::from(Span::styled(
             "Active Herdr agents, sorted by PR state. Enter focuses the agent.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(app.palette.overlay0),
         )),
     ];
     frame.render_widget(Paragraph::new(lines), area);
@@ -251,9 +258,15 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &mut PrPickerApp) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 message,
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(app.palette.overlay0),
             )))
-            .block(Block::default().title("PRs").borders(Borders::ALL)),
+            .block(
+                Block::default()
+                    .title("PRs")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.palette.overlay0))
+                    .style(Style::default().bg(app.palette.panel_bg)),
+            ),
             area,
         );
         return;
@@ -269,6 +282,7 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &mut PrPickerApp) {
             row,
             absolute_index == app.selected,
             area.width.saturating_sub(2),
+            &app.palette,
         ));
     }
 
@@ -278,44 +292,64 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &mut PrPickerApp) {
         "PRs".to_string()
     };
     frame.render_widget(
-        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
+        Paragraph::new(lines).block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.palette.overlay0))
+                .style(Style::default().bg(app.palette.panel_bg)),
+        ),
         area,
     );
 }
 
 fn render_details(frame: &mut Frame<'_>, area: Rect, app: &PrPickerApp) {
     let lines = if let Some(row) = app.selected_row() {
-        selected_detail_lines(row, app.status.as_deref(), area.width.saturating_sub(2))
+        selected_detail_lines(
+            row,
+            app.status.as_deref(),
+            area.width.saturating_sub(2),
+            &app.palette,
+        )
     } else {
         vec![Line::from(Span::styled(
             app.status.as_deref().unwrap_or("Nothing selected"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(app.palette.overlay0),
         ))]
     };
     frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::default().title("Details").borders(Borders::ALL)),
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title("Details")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(app.palette.overlay0))
+                .style(Style::default().bg(app.palette.panel_bg)),
+        ),
         area,
     );
 }
 
-fn render_footer(frame: &mut Frame<'_>, area: Rect) {
+fn render_footer(frame: &mut Frame<'_>, area: Rect, palette: &PickerPalette) {
     let controls =
         "↑/↓ j/k select · Enter focus · o open/copy URL · y copy URL · r refresh · q/Esc close";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             controls,
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette.overlay0),
         ))),
         area,
     );
 }
 
-fn pr_row_line(row: &PrRow, selected: bool, max_width: u16) -> Line<'static> {
-    let base = row_style(selected);
-    let state_style = base.fg(pr_state_color(row.state));
-    let check_style = base.fg(check_state_color(row.checks));
+fn pr_row_line(
+    row: &PrRow,
+    selected: bool,
+    max_width: u16,
+    palette: &PickerPalette,
+) -> Line<'static> {
+    let base = row_style(selected, palette);
+    let state_style = base.fg(pr_state_color(row.state, palette));
+    let check_style = base.fg(check_state_color(row.checks, palette));
     let review = review_label(row.review.as_deref());
     let total_changed = row.additions + row.deletions;
     let title_width = usize::from(max_width).saturating_sub(76).max(18);
@@ -342,20 +376,31 @@ fn pr_row_line(row: &PrRow, selected: bool, max_width: u16) -> Line<'static> {
             ),
             check_style,
         ),
-        Span::styled(format!("Δ{:<5}", total_changed), base.fg(Color::Yellow)),
-        Span::styled(format!("+{} ", row.additions), base.fg(Color::Green)),
-        Span::styled(format!("-{} ", row.deletions), base.fg(Color::Red)),
-        Span::styled(format!("{}f ", row.changed_files), base.fg(Color::Gray)),
+        Span::styled(format!("Δ{:<5}", total_changed), base.fg(palette.yellow)),
+        Span::styled(format!("+{} ", row.additions), base.fg(palette.green)),
+        Span::styled(format!("-{} ", row.deletions), base.fg(palette.red)),
+        Span::styled(
+            format!("{}f ", row.changed_files),
+            base.fg(palette.subtext0),
+        ),
         Span::styled(
             format!("{}{} ", COMMENT_ICON, row.comments),
-            base.fg(Color::Cyan),
+            base.fg(palette.blue),
         ),
-        Span::styled(format!("{:<9}", review), base.fg(review_color(review))),
+        Span::styled(
+            format!("{:<9}", review),
+            base.fg(review_color(review, palette)),
+        ),
         Span::styled(truncate(&row.title, title_width), base),
     ])
 }
 
-fn selected_detail_lines(row: &PrRow, status: Option<&str>, max_width: u16) -> Vec<Line<'static>> {
+fn selected_detail_lines(
+    row: &PrRow,
+    status: Option<&str>,
+    max_width: u16,
+    palette: &PickerPalette,
+) -> Vec<Line<'static>> {
     let total_changed = row.additions + row.deletions;
     let title_width = usize::from(max_width).saturating_sub(8).max(20);
     let mut lines = vec![
@@ -363,75 +408,77 @@ fn selected_detail_lines(row: &PrRow, status: Option<&str>, max_width: u16) -> V
             Span::styled(
                 format!("#{} ", row.number),
                 Style::default()
-                    .fg(Color::White)
+                    .fg(palette.text)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 truncate(&row.title, title_width),
-                Style::default().fg(Color::White),
+                Style::default().fg(palette.text),
             ),
         ]),
         Line::from(vec![
             Span::styled(
                 pr_state_label(row.state),
-                Style::default().fg(pr_state_color(row.state)),
+                Style::default().fg(pr_state_color(row.state, palette)),
             ),
             Span::raw(" · "),
             Span::styled(
                 check_state_label(row.checks),
-                Style::default().fg(check_state_color(row.checks)),
+                Style::default().fg(check_state_color(row.checks, palette)),
             ),
             Span::raw(" · "),
             Span::styled(
                 review_label(row.review.as_deref()),
-                Style::default().fg(review_color(review_label(row.review.as_deref()))),
+                Style::default().fg(review_color(review_label(row.review.as_deref()), palette)),
             ),
             Span::raw(format!(" · {} comments", row.comments)),
         ]),
         Line::from(vec![
-            Span::styled("changes ", Style::default().fg(Color::DarkGray)),
+            Span::styled("changes ", Style::default().fg(palette.overlay0)),
             Span::styled(
                 format!("{total_changed} lines "),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(palette.yellow),
             ),
             Span::styled(
                 format!("+{} ", row.additions),
-                Style::default().fg(Color::Green),
+                Style::default().fg(palette.green),
             ),
             Span::styled(
                 format!("-{} ", row.deletions),
-                Style::default().fg(Color::Red),
+                Style::default().fg(palette.red),
             ),
             Span::styled(
                 format!("{} files", row.changed_files),
-                Style::default().fg(Color::Gray),
+                Style::default().fg(palette.subtext0),
             ),
         ]),
         Line::from(Span::styled(
             format!("{} · {} · {}", row.agent, row.agent_status, row.branch),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.subtext0),
         )),
         Line::from(Span::styled(
             row.url.clone(),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(palette.blue),
         )),
     ];
 
     if let Some(status) = status {
         lines.push(Line::from(Span::styled(
             status.to_string(),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(palette.yellow),
         )));
     }
 
     lines
 }
 
-fn row_style(selected: bool) -> Style {
+fn row_style(selected: bool, palette: &PickerPalette) -> Style {
     if selected {
-        Style::default().bg(Color::DarkGray).fg(Color::White)
+        Style::default()
+            .bg(palette.accent)
+            .fg(palette.selected_fg())
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(palette.subtext0).bg(palette.panel_bg)
     }
 }
 
@@ -449,12 +496,12 @@ fn pr_state_label(state: PrState) -> &'static str {
     }
 }
 
-fn pr_state_color(state: PrState) -> Color {
+fn pr_state_color(state: PrState, palette: &PickerPalette) -> Color {
     match state {
-        PrState::Open => Color::Green,
-        PrState::Draft => Color::DarkGray,
-        PrState::Merged => Color::Magenta,
-        PrState::Closed => Color::Red,
+        PrState::Open => palette.green,
+        PrState::Draft => palette.overlay0,
+        PrState::Merged => palette.accent,
+        PrState::Closed => palette.red,
     }
 }
 
@@ -476,12 +523,12 @@ fn check_state_icon(state: CheckState) -> &'static str {
     }
 }
 
-fn check_state_color(state: CheckState) -> Color {
+fn check_state_color(state: CheckState, palette: &PickerPalette) -> Color {
     match state {
-        CheckState::Pass => Color::Green,
-        CheckState::Pending => Color::Yellow,
-        CheckState::Fail => Color::Red,
-        CheckState::None => Color::DarkGray,
+        CheckState::Pass => palette.green,
+        CheckState::Pending => palette.yellow,
+        CheckState::Fail => palette.red,
+        CheckState::None => palette.overlay0,
     }
 }
 
@@ -495,12 +542,12 @@ fn review_label(review: Option<&str>) -> &'static str {
     }
 }
 
-fn review_color(review: &str) -> Color {
+fn review_color(review: &str, palette: &PickerPalette) -> Color {
     match review {
-        "approved" | "APPROVED" => Color::Green,
-        "changes" | "CHANGES_REQUESTED" => Color::Red,
-        "review" | "REVIEW_REQUIRED" => Color::Yellow,
-        _ => Color::DarkGray,
+        "approved" | "APPROVED" => palette.green,
+        "changes" | "CHANGES_REQUESTED" => palette.red,
+        "review" | "REVIEW_REQUIRED" => palette.yellow,
+        _ => palette.overlay0,
     }
 }
 

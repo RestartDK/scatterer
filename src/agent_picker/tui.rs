@@ -2,6 +2,7 @@ use super::{AgentRow, AgentStatus, WorkspaceGroup, load_agent_groups, read_visib
 use crate::focus::focus_pane;
 use crate::herdr::herdr_socket_path;
 use crate::terminal_session::TerminalSession;
+use crate::theme::PickerPalette;
 use ansi_to_tui::IntoText;
 use anyhow::{Context, Result};
 use crossterm::event::{
@@ -85,6 +86,7 @@ struct PickerLayout {
 #[derive(Debug)]
 struct AgentPickerApp {
     socket_path: PathBuf,
+    palette: PickerPalette,
     groups: Vec<WorkspaceGroup>,
     selected: usize,
     list_scroll: usize,
@@ -104,6 +106,7 @@ impl AgentPickerApp {
         let now = Instant::now();
         Self {
             socket_path,
+            palette: PickerPalette::load(),
             groups: Vec::new(),
             selected: 0,
             list_scroll: 0,
@@ -535,6 +538,10 @@ fn draw_agent_picker(frame: &mut Frame<'_>, app: &mut AgentPickerApp) {
     if area.width == 0 || area.height == 0 {
         return;
     }
+    frame.render_widget(
+        Block::default().style(Style::default().bg(app.palette.panel_bg)),
+        area,
+    );
 
     // Herdr already supplies the popup border and "Agents" title. Drawing a
     // second shell here creates a misleading nested "Sessions" container.
@@ -544,9 +551,19 @@ fn draw_agent_picker(frame: &mut Frame<'_>, app: &mut AgentPickerApp) {
     app.ensure_selection_visible(layout.list.height as usize);
 
     render_search(frame, layout.search, app, agents.len());
-    render_separator(frame, layout.search_separator, layout.orientation);
+    render_separator(
+        frame,
+        layout.search_separator,
+        layout.orientation,
+        &app.palette,
+    );
     render_agent_list(frame, layout.list, app, &agents);
-    render_separator(frame, layout.content_separator, layout.orientation);
+    render_separator(
+        frame,
+        layout.content_separator,
+        layout.orientation,
+        &app.palette,
+    );
     render_preview(frame, layout.preview, app);
     render_detail(frame, layout.detail, app);
     render_footer(frame, layout.footer, app);
@@ -611,10 +628,10 @@ fn picker_layout(area: Rect) -> PickerLayout {
 fn render_search(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp, count: usize) {
     let focus_style = if app.search_focused {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(app.palette.accent)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(app.palette.overlay0)
     };
     let mut spans = vec![Span::styled(" / ", focus_style)];
     if let Some(filter) = app.state_filter {
@@ -626,12 +643,12 @@ fn render_search(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp, count:
         };
         spans.push(Span::styled(
             format!("{} {}", status_icon(status), status.label()),
-            status_style(status).add_modifier(Modifier::BOLD),
+            status_style(status, &app.palette).add_modifier(Modifier::BOLD),
         ));
     } else if app.query.is_empty() {
         spans.push(Span::styled(
             "search agents",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(app.palette.overlay0),
         ));
     } else {
         spans.push(Span::raw(app.query.clone()));
@@ -647,12 +664,17 @@ fn render_search(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp, count:
         as usize;
     spans.push(Span::styled(
         format!("{}{count_label}", " ".repeat(padding)),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(app.palette.overlay0),
     ));
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn render_separator(frame: &mut Frame<'_>, area: Rect, orientation: PickerOrientation) {
+fn render_separator(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    orientation: PickerOrientation,
+    palette: &PickerPalette,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -663,13 +685,13 @@ fn render_separator(frame: &mut Frame<'_>, area: Rect, orientation: PickerOrient
     if area.width == 1 {
         for offset in 0..area.height {
             frame.render_widget(
-                Paragraph::new("│").style(Style::default().fg(Color::DarkGray)),
+                Paragraph::new("│").style(Style::default().fg(palette.surface1)),
                 Rect::new(area.x, area.y + offset, 1, 1),
             );
         }
     } else {
         frame.render_widget(
-            Paragraph::new(symbol).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(symbol).style(Style::default().fg(palette.surface1)),
             area,
         );
     }
@@ -686,7 +708,7 @@ fn render_agent_list(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp, ag
                     .as_deref()
                     .unwrap_or("No agents match the current filter"),
             )
-            .style(Style::default().fg(Color::DarkGray)),
+            .style(Style::default().fg(app.palette.overlay0)),
             area,
         );
         return;
@@ -708,7 +730,8 @@ fn render_agent_list(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp, ag
                 frame.render_widget(
                     Paragraph::new(truncate(&text, area.width as usize)).style(
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(app.palette.accent)
+                            .bg(app.palette.panel_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                     rect,
@@ -721,6 +744,7 @@ fn render_agent_list(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp, ag
                     &agents[*agent_index],
                     *agent_index == app.selected,
                     *last,
+                    &app.palette,
                 );
             }
         }
@@ -733,11 +757,14 @@ fn render_agent_row(
     agent: &AgentRow,
     selected: bool,
     last: bool,
+    palette: &PickerPalette,
 ) {
     let base = if selected {
-        Style::default().bg(Color::Cyan).fg(Color::Black)
-    } else {
         Style::default()
+            .bg(palette.accent)
+            .fg(palette.selected_fg())
+    } else {
+        Style::default().bg(palette.panel_bg).fg(palette.text)
     };
     frame.render_widget(Clear, area);
     frame.render_widget(
@@ -768,14 +795,17 @@ fn render_agent_row(
     let label_style = if selected {
         base.add_modifier(Modifier::BOLD)
     } else if agent.focused {
-        Style::default().add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(palette.text)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(palette.subtext0).bg(palette.panel_bg)
     };
     let status_color = if selected {
         base
     } else {
-        status_style(agent.status)
+        status_style(agent.status, palette).bg(palette.panel_bg)
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -784,7 +814,7 @@ fn render_agent_row(
                 if selected {
                     base
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(palette.surface1).bg(palette.panel_bg)
                 },
             ),
             Span::styled(status_icon(agent.status), status_color),
@@ -795,7 +825,7 @@ fn render_agent_row(
                 if selected {
                     base
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(palette.overlay0).bg(palette.panel_bg)
                 },
             ),
         ]))
@@ -825,11 +855,12 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp) {
         .title_style(
             Style::default().fg(agent
                 .as_ref()
-                .map(|agent| status_color(agent.status))
-                .unwrap_or(Color::DarkGray)),
+                .map(|agent| status_color(agent.status, &app.palette))
+                .unwrap_or(app.palette.overlay0)),
         )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(app.palette.overlay0))
+        .style(Style::default().bg(app.palette.panel_bg));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -838,7 +869,7 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp) {
     if agent.is_none() {
         frame.render_widget(
             Paragraph::new("Select an agent to preview its terminal")
-                .style(Style::default().fg(Color::DarkGray)),
+                .style(Style::default().fg(app.palette.overlay0)),
             inner,
         );
         return;
@@ -846,7 +877,7 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp) {
     if app.preview_ansi.is_empty() {
         frame.render_widget(
             Paragraph::new("Waiting for terminal output…")
-                .style(Style::default().fg(Color::DarkGray)),
+                .style(Style::default().fg(app.palette.overlay0)),
             inner,
         );
         return;
@@ -879,7 +910,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp) {
     let value = app.status.as_deref().or(detail.as_deref()).unwrap_or("");
     frame.render_widget(
         Paragraph::new(truncate(value, area.width as usize))
-            .style(Style::default().fg(Color::DarkGray)),
+            .style(Style::default().fg(app.palette.overlay0)),
         area,
     );
 }
@@ -889,9 +920,9 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp) {
         return;
     }
     let key = Style::default()
-        .fg(Color::Cyan)
+        .fg(app.palette.accent)
         .add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(app.palette.overlay0);
     let spans = if app.search_focused {
         vec![
             Span::styled(" enter", key),
@@ -946,18 +977,18 @@ fn status_icon(status: AgentStatus) -> &'static str {
     }
 }
 
-fn status_color(status: AgentStatus) -> Color {
+fn status_color(status: AgentStatus, palette: &PickerPalette) -> Color {
     match status {
-        AgentStatus::Blocked => Color::Red,
-        AgentStatus::Working => Color::Yellow,
-        AgentStatus::Done => Color::Cyan,
-        AgentStatus::Idle => Color::Green,
-        AgentStatus::Unknown => Color::DarkGray,
+        AgentStatus::Blocked => palette.red,
+        AgentStatus::Working => palette.yellow,
+        AgentStatus::Done => palette.teal,
+        AgentStatus::Idle => palette.green,
+        AgentStatus::Unknown => palette.overlay0,
     }
 }
 
-fn status_style(status: AgentStatus) -> Style {
-    Style::default().fg(status_color(status))
+fn status_style(status: AgentStatus, palette: &PickerPalette) -> Style {
+    Style::default().fg(status_color(status, palette))
 }
 
 fn short_pane_id(value: &str) -> &str {

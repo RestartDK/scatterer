@@ -13,6 +13,7 @@ mod pane_env;
 mod pr_picker;
 mod quick_start;
 mod terminal_session;
+mod theme;
 mod util;
 mod worktree_setup;
 
