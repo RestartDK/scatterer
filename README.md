@@ -22,6 +22,16 @@ dark theme, but not a matching Tokyo Night Day theme. Herdr itself supports
 `name = "terminal"` or `dark_name = "tokyo-night"` / `light_name =
 "tokyo-night-day"` in `~/.config/herdr/config.toml`.
 
+## Scatterer popup theming
+
+Scatterer's agent picker, PR picker, and quick-start popup share one theme
+module. It reads Herdr's `[theme]` configuration, mirrors every built-in Herdr
+palette, applies `[theme.custom]` overrides, and follows `auto_switch` on macOS.
+Selection backgrounds, borders, text, muted labels, and semantic status colors
+therefore match the active Herdr theme instead of using fixed ANSI colors.
+External applications such as Hunk and lazygit continue to manage their own
+themes.
+
 ## Quick start
 
 The `daniel.scatterer.quick-start` action opens a Herdr popup TUI. Optionally
