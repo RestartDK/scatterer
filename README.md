@@ -162,6 +162,53 @@ state: `pr_open`, `pr_draft`, `pr_merged`, or `pr_closed`. Each badge displays
 the PR number, Nerd Font state icon, and state inside the normal Herdr Agents
 view; Scatterer does not replace or filter that view.
 
+## Agent session picker
+
+The `daniel.scatterer.agent-picker` action opens a Telescope-style Herdr popup.
+It follows Herdr's session navigator structure and status language, groups live
+agents by workspace, and renders the selected agent's current terminal screen
+as ANSI-styled text. Wide terminals place the picker on the left and preview on
+the right. Narrow terminals stack the picker above the preview. Moving the
+pointer over a row updates the preview; clicking or pressing `Enter` focuses the
+real agent pane.
+
+Controls:
+
+```txt
+↑/↓ or j/k   select and preview
+/            search
+b/w/i/d/a    blocked/working/idle/done/all
+PageUp/Down  scroll the terminal preview
+r            refresh agents and preview
+Enter/click  focus the selected agent
+q/Esc        close
+```
+
+Only the selected pane is read. Scatterer requests `pane.read` with `source =
+"visible"` and `format = "ansi"`, then parses the returned styles into Ratatui
+cells. The preview is read-only and does not focus, resize, or send input to the
+agent.
+
+## Herdr upstream follow-ups
+
+Keep these limitations in mind for possible Herdr changes:
+
+1. **Pane previews cannot currently be event-driven.** The public socket API can
+   subscribe to pane lifecycle and agent-status events, but it does not expose a
+   usable `pane.output_changed` subscription or terminal-frame stream.
+   `pane.read` also currently returns no useful changing revision. Scatterer
+   therefore polls only the highlighted pane every 150 ms. A coalesced
+   `pane.output_changed { pane_id, revision }` event would let the plugin read
+   only after output changes; a terminal-cell delta stream would avoid snapshot
+   reads entirely. High-volume events need per-pane coalescing and backpressure.
+2. **SSH forwarding can become stale in long-lived Herdr sessions.** A Herdr
+   server can outlive the SSH connection whose forwarding environment it
+   inherited. After reconnecting, forwarded socket paths such as
+   `SSH_AUTH_SOCK` may point at the old, dead connection, and panes created by
+   the existing Herdr server continue inheriting that stale value. Herdr needs a
+   way to refresh connection-scoped environment from the currently attached
+   client, or proxy forwarded sockets through a stable Herdr-owned path.
+
 ## Development install
 
 A Nix development shell supplies Rust, Clippy, rustfmt, pkg-config, and Darwin's
@@ -175,6 +222,7 @@ herdr plugin link .
 herdr plugin action invoke daniel.scatterer.apply-layout
 herdr plugin action invoke daniel.scatterer.quick-start
 herdr plugin action invoke daniel.scatterer.pr-picker
+herdr plugin action invoke daniel.scatterer.agent-picker
 herdr plugin action invoke daniel.scatterer.remove-flat-worktree
 herdr plugin action invoke daniel.scatterer.lazygit
 herdr plugin action invoke daniel.scatterer.appearance-sync
@@ -184,9 +232,14 @@ herdr plugin action invoke daniel.scatterer.nav-left
 
 ## Keybinding
 
-Herdr plugins cannot self-install keybindings. Add this to your Herdr config:
+Herdr plugins cannot self-install keybindings. Add this to your Herdr config.
+To replace Herdr's built-in `prefix+g` navigator with the Scatterer agent
+picker, clear the built-in `goto` binding first:
 
 ```toml
+[keys]
+goto = ""
+
 [[keys.command]]
 key = "prefix+shift+s"
 type = "plugin_action"
@@ -204,6 +257,12 @@ key = "prefix+shift+p"
 type = "plugin_action"
 command = "daniel.scatterer.pr-picker"
 description = "scatterer PR picker"
+
+[[keys.command]]
+key = "prefix+g"
+type = "plugin_action"
+command = "daniel.scatterer.agent-picker"
+description = "scatterer agent session picker"
 
 [[keys.command]]
 key = "prefix+shift+g"
@@ -238,7 +297,8 @@ description = "navigate right (vim/herdr)"
 
 With Daniel's current `prefix = "ctrl+x"`, these are `ctrl+x` then `shift+s`
 for layout, `ctrl+x` then `shift+a` for quick start, `ctrl+x` then `shift+p`
-for PR picker, and `ctrl+x` then `shift+g` for lazygit. The navigation bindings
+for PR picker, `ctrl+x` then `g` for the agent session picker, and `ctrl+x` then
+`shift+g` for lazygit. The navigation bindings
 are direct `ctrl+h/j/k/l` chords, which shadow shell readline defaults such as
 `ctrl+l` clear-screen and `ctrl+k` kill-line.
 

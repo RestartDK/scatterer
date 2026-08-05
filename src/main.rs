@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 
+mod agent_picker;
 mod appearance;
 mod config;
 mod focus;
@@ -27,6 +28,8 @@ fn main() -> Result<()> {
         Some("remove-flat-worktree") => quick_start::remove_flat_worktree(),
         Some("open-pr-picker") => pr_picker::open(),
         Some("pr-picker") => pr_picker::run(),
+        Some("open-agent-picker") => agent_picker::open(),
+        Some("agent-picker") => agent_picker::run(),
         Some("open-lazygit") => lazygit::open(),
         Some("lazygit") => lazygit::run(),
         Some("nav") => nav::run(args),
@@ -35,7 +38,7 @@ fn main() -> Result<()> {
         Some("nav-up") => nav::run_direction("up"),
         Some("nav-right") => nav::run_direction("right"),
         Some(other) => Err(anyhow!(
-            "unknown command '{other}'. Try: scatterer apply-layout | appearance <sync|watch|install-launchd|uninstall-launchd> | open-quick-start | quick-start | remove-flat-worktree | open-pr-picker | pr-picker | open-lazygit | lazygit | nav <left|down|up|right>"
+            "unknown command '{other}'. Try: scatterer apply-layout | appearance <sync|watch|install-launchd|uninstall-launchd> | open-quick-start | quick-start | remove-flat-worktree | open-pr-picker | pr-picker | open-agent-picker | agent-picker | open-lazygit | lazygit | nav <left|down|up|right>"
         )),
     }
 }

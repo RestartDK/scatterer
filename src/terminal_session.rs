@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -8,24 +11,39 @@ use std::io;
 
 pub(crate) struct TerminalSession {
     keyboard_enhancements: bool,
+    mouse_capture: bool,
     active: bool,
 }
 
 impl TerminalSession {
     pub(crate) fn enter(keyboard_enhancements: bool) -> Result<Self> {
+        Self::enter_with_mouse(keyboard_enhancements, false)
+    }
+
+    pub(crate) fn enter_with_mouse(
+        keyboard_enhancements: bool,
+        mouse_capture: bool,
+    ) -> Result<Self> {
         enable_raw_mode().context("failed to enable raw mode")?;
         let mut session = Self {
             keyboard_enhancements,
+            mouse_capture,
             active: true,
         };
-        let result = if keyboard_enhancements {
-            execute!(
+        let result = match (keyboard_enhancements, mouse_capture) {
+            (true, true) => execute!(
+                io::stdout(),
+                EnterAlternateScreen,
+                EnableMouseCapture,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            ),
+            (true, false) => execute!(
                 io::stdout(),
                 EnterAlternateScreen,
                 PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-            )
-        } else {
-            execute!(io::stdout(), EnterAlternateScreen)
+            ),
+            (false, true) => execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture),
+            (false, false) => execute!(io::stdout(), EnterAlternateScreen),
         };
         if let Err(error) = result {
             let _ = session.finish();
@@ -40,14 +58,20 @@ impl TerminalSession {
         }
         self.active = false;
 
-        let leave_result = if self.keyboard_enhancements {
-            execute!(
+        let leave_result = match (self.keyboard_enhancements, self.mouse_capture) {
+            (true, true) => execute!(
+                io::stdout(),
+                PopKeyboardEnhancementFlags,
+                DisableMouseCapture,
+                LeaveAlternateScreen
+            ),
+            (true, false) => execute!(
                 io::stdout(),
                 PopKeyboardEnhancementFlags,
                 LeaveAlternateScreen
-            )
-        } else {
-            execute!(io::stdout(), LeaveAlternateScreen)
+            ),
+            (false, true) => execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen),
+            (false, false) => execute!(io::stdout(), LeaveAlternateScreen),
         }
         .context("failed to leave alternate screen");
         let raw_result = disable_raw_mode().context("failed to disable raw mode");
