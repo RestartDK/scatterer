@@ -52,6 +52,13 @@ contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-lazygit"]
 
 [[actions]]
+id = "review-toggle"
+title = "Toggle Review pane"
+description = "Open Review for uncommitted changes in a right split, or close the current tab's Review pane."
+contexts = ["pane", "workspace"]
+command = ["bash", "scripts/scatterer.sh", "toggle-review"]
+
+[[actions]]
 id = "appearance-sync"
 title = "Sync appearance to Pi panes"
 description = "macOS-only temporary bridge that sends the current light/dark appearance to Pi child panes."
@@ -129,3 +136,9 @@ id = "lazygit"
 title = "Lazygit"
 placement = "overlay"
 command = ["bash", "scripts/scatterer.sh", "lazygit"]
+
+[[panes]]
+id = "review"
+title = "Review"
+placement = "split"
+command = ["/bin/bash", "scripts/scatterer.sh", "review"]
