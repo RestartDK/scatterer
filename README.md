@@ -101,6 +101,15 @@ multiline text atomically.
 The `daniel.scatterer.lazygit` action opens `lazygit` in a Herdr overlay using
 the focused pane's current working directory.
 
+## Review pane
+
+The `daniel.scatterer.review-toggle` action opens a `Review` right split running
+`tuicr --working-tree` from the focused pane's current working directory.
+Invoking it again from the same tab closes that review pane. Quitting the review
+also closes its pane and restores the space to the remaining layout. Outside a
+Git repository, Scatterer shows an in-app Herdr error toast without opening a
+pane.
+
 ## macOS appearance sync
 
 Scatterer includes a macOS-only temporary bridge for Pi panes while Herdr does
@@ -235,6 +244,7 @@ herdr plugin action invoke daniel.scatterer.pr-picker
 herdr plugin action invoke daniel.scatterer.agent-picker
 herdr plugin action invoke daniel.scatterer.remove-flat-worktree
 herdr plugin action invoke daniel.scatterer.lazygit
+herdr plugin action invoke daniel.scatterer.review-toggle
 herdr plugin action invoke daniel.scatterer.appearance-sync
 herdr plugin action invoke daniel.scatterer.appearance-install-launchd
 herdr plugin action invoke daniel.scatterer.nav-left
@@ -281,6 +291,12 @@ command = "daniel.scatterer.lazygit"
 description = "lazygit"
 
 [[keys.command]]
+key = "prefix+u"
+type = "plugin_action"
+command = "daniel.scatterer.review-toggle"
+description = "toggle Review pane"
+
+[[keys.command]]
 key = "ctrl+h"
 type = "plugin_action"
 command = "daniel.scatterer.nav-left"
@@ -307,8 +323,8 @@ description = "navigate right (vim/herdr)"
 
 With Daniel's current `prefix = "ctrl+x"`, these are `ctrl+x` then `shift+s`
 for layout, `ctrl+x` then `shift+a` for quick start, `ctrl+x` then `shift+p`
-for PR picker, `ctrl+x` then `g` for the agent session picker, and `ctrl+x` then
-`shift+g` for lazygit. The navigation bindings
+for PR picker, `ctrl+x` then `g` for the agent session picker, `ctrl+x` then
+`shift+g` for lazygit, and `ctrl+x` then `u` to toggle Review. The navigation bindings
 are direct `ctrl+h/j/k/l` chords, which shadow shell readline defaults such as
 `ctrl+l` clear-screen and `ctrl+k` kill-line.
 
