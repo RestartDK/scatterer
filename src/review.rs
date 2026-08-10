@@ -3,8 +3,10 @@ use crate::util::{non_empty_env, string_at};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::env;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 
 const REVIEW_ENTRYPOINT: &str = "review";
 const REVIEW_PANE_TITLE: &str = "Review";
@@ -26,18 +28,32 @@ pub(crate) fn toggle() -> Result<()> {
     }
 
     if !is_git_repository(&source.cwd) {
-        socket_call(
+        show_notification(
             &socket_path,
-            "notification.show",
-            json!({
-                "title": "Review unavailable",
-                "body": format!("Not a Git repository: {}", source.cwd.display()),
-                "position": "bottom-right",
-                "sound": "none",
-            }),
-        )
-        .context("failed to show the Review error notification")?;
+            "Review unavailable",
+            &format!("Not a Git repository: {}", source.cwd.display()),
+        )?;
         return Ok(());
+    }
+
+    match has_working_tree_changes(&source.cwd) {
+        Ok(true) => {}
+        Ok(false) => {
+            show_notification(
+                &socket_path,
+                "Review unavailable",
+                &format!("No working tree changes in {}", source.cwd.display()),
+            )?;
+            return Ok(());
+        }
+        Err(error) => {
+            show_notification(
+                &socket_path,
+                "Review unavailable",
+                &format_review_error(&error),
+            )?;
+            return Ok(());
+        }
     }
 
     socket_call(
@@ -61,6 +77,11 @@ pub(crate) fn toggle() -> Result<()> {
 
 pub(crate) fn run() -> Result<()> {
     let result = run_tuicr();
+    if let Err(error) = &result
+        && let Ok(socket_path) = herdr_socket_path()
+    {
+        let _ = show_notification(&socket_path, "Review failed", &format_review_error(error));
+    }
     close_own_pane();
     result
 }
@@ -71,12 +92,31 @@ fn run_tuicr() -> Result<()> {
     env::set_current_dir(&source.cwd)
         .with_context(|| format!("failed to enter {}", source.cwd.display()))?;
 
-    let status = Command::new("tuicr")
+    let mut child = Command::new("tuicr")
         .arg("--working-tree")
-        .status()
+        .stderr(Stdio::piped())
+        .spawn()
         .context("failed to launch tuicr")?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("failed to capture tuicr stderr"))?;
+    let stderr_reader = thread::spawn(move || {
+        let mut output = String::new();
+        stderr.read_to_string(&mut output).map(|_| output)
+    });
+
+    let status = child.wait().context("failed to wait for tuicr")?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow!("failed to join the tuicr stderr reader"))?
+        .context("failed to read tuicr stderr")?;
     if !status.success() {
-        return Err(anyhow!("tuicr exited with status {status}"));
+        let detail = stderr.trim();
+        if detail.is_empty() {
+            return Err(anyhow!("tuicr exited with status {status}"));
+        }
+        return Err(anyhow!("tuicr exited with status {status}: {detail}"));
     }
     Ok(())
 }
@@ -119,11 +159,56 @@ fn is_git_repository(cwd: &Path) -> bool {
         .arg("-C")
         .arg(cwd)
         .args(["rev-parse", "--show-toplevel"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+fn has_working_tree_changes(cwd: &Path) -> Result<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("failed to inspect working tree at {}", cwd.display()))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "git status failed for {}: {}",
+            cwd.display(),
+            detail.trim()
+        ));
+    }
+    Ok(!output.stdout.is_empty())
+}
+
+fn show_notification(socket_path: &Path, title: &str, body: &str) -> Result<()> {
+    socket_call(
+        socket_path,
+        "notification.show",
+        json!({
+            "title": title,
+            "body": body,
+            "position": "bottom-right",
+            "sound": "none",
+        }),
+    )
+    .context("failed to show the Review notification")?;
+    Ok(())
+}
+
+fn format_review_error(error: &anyhow::Error) -> String {
+    const MAX_CHARS: usize = 800;
+    let detail = format!("{error:#}");
+    let mut body = detail.chars().take(MAX_CHARS).collect::<String>();
+    if detail.chars().count() > MAX_CHARS {
+        body.push('…');
+    }
+    body
 }
 
 fn find_review_pane(
@@ -221,5 +306,35 @@ mod tests {
             "argv0": "scatterer",
             "argv": ["scatterer", "review"]
         })));
+    }
+
+    #[test]
+    fn detects_working_tree_changes() {
+        let temp = env::temp_dir().join(format!(
+            "scatterer-review-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("create temp directory");
+        Command::new("git")
+            .arg("init")
+            .arg("--quiet")
+            .arg(&temp)
+            .status()
+            .expect("initialize repository");
+        assert!(!has_working_tree_changes(&temp).expect("inspect clean repository"));
+
+        std::fs::write(temp.join("new.txt"), "change\n").expect("write untracked file");
+        assert!(has_working_tree_changes(&temp).expect("inspect changed repository"));
+        std::fs::remove_dir_all(temp).expect("remove temp repository");
+    }
+
+    #[test]
+    fn truncates_long_review_errors() {
+        let error = anyhow!("{}", "x".repeat(1_000));
+        let body = format_review_error(&error);
+        assert_eq!(body.chars().count(), 801);
+        assert!(body.ends_with('…'));
     }
 }
