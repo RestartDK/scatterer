@@ -1,7 +1,8 @@
-use crate::herdr::{herdr_socket_path, socket_call};
+use crate::herdr::HerdrClient;
+use crate::ids::PaneId;
 use crate::util::string_at;
 use anyhow::{Context, Result, anyhow, bail};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -139,46 +140,31 @@ fn uninstall_launchd() -> Result<()> {
 }
 
 fn notify_pi_panes(scheme: ColorScheme) -> Result<usize> {
-    let socket_path = herdr_socket_path()?;
-    let result =
-        socket_call(&socket_path, "pane.list", json!({})).context("failed to list Herdr panes")?;
-    let panes = result
-        .get("panes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("pane.list response did not include panes: {result}"))?;
+    let client = HerdrClient::from_env()?;
+    let panes = client.list_panes(None)?;
 
     let mut notified = 0usize;
-    for pane in panes {
-        let Some(pane_id) = string_at(pane, &["pane_id"]) else {
+    for pane in &panes {
+        let Some(pane_id) = string_at(pane, &["pane_id"]).map(PaneId::from) else {
             continue;
         };
         if string_at(pane, &["agent"]).as_deref() != Some("pi") {
             continue;
         }
-        if !pane_foreground_is_pi(&socket_path, &pane_id).unwrap_or(false) {
+        if !pane_foreground_is_pi(&client, &pane_id).unwrap_or(false) {
             continue;
         }
-        socket_call(
-            &socket_path,
-            "pane.send_text",
-            json!({
-                "pane_id": pane_id,
-                "text": scheme.terminal_report(),
-            }),
-        )
-        .with_context(|| format!("failed to send appearance event to pane {pane_id}"))?;
+        client
+            .send_text_to_pane(&pane_id, scheme.terminal_report())
+            .with_context(|| format!("failed to send appearance event to pane {pane_id}"))?;
         notified += 1;
     }
 
     Ok(notified)
 }
 
-fn pane_foreground_is_pi(socket_path: &Path, pane_id: &str) -> Result<bool> {
-    let result = socket_call(
-        socket_path,
-        "pane.process_info",
-        json!({ "pane_id": pane_id }),
-    )?;
+fn pane_foreground_is_pi(client: &HerdrClient, pane_id: &PaneId) -> Result<bool> {
+    let result = client.pane_process_info(pane_id)?;
     let process_info = result.get("process_info").unwrap_or(&result);
     let processes = process_info
         .get("foreground_processes")
@@ -341,6 +327,7 @@ fn path_str(path: &Path) -> Result<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn color_scheme_reports_match_pi_parser() {

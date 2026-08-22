@@ -54,7 +54,28 @@ pub(crate) struct QuickStartSetupConfig {
     pub(crate) commands: Vec<String>,
 }
 
-impl ProjectConfig {
+/// Layered config merging: later (more local) config wins field by field.
+trait Merge {
+    fn merge(&mut self, next: Self);
+}
+
+/// A later `Some` overrides; a later `None` keeps the earlier value.
+impl<T> Merge for Option<T> {
+    fn merge(&mut self, next: Self) {
+        if next.is_some() {
+            *self = next;
+        }
+    }
+}
+
+/// Lists accumulate across config layers instead of replacing each other.
+impl<T> Merge for Vec<T> {
+    fn merge(&mut self, mut next: Self) {
+        self.append(&mut next);
+    }
+}
+
+impl Merge for ProjectConfig {
     fn merge(&mut self, next: ProjectConfig) {
         self.layout.merge(next.layout);
         self.env.merge(next.env);
@@ -62,40 +83,30 @@ impl ProjectConfig {
     }
 }
 
-impl LayoutConfig {
+impl Merge for LayoutConfig {
     fn merge(&mut self, next: LayoutConfig) {
-        if next.agent.is_some() {
-            self.agent = next.agent;
-        }
-        if next.hunk.is_some() {
-            self.hunk = next.hunk;
-        }
-        if next.runner.is_some() {
-            self.runner = next.runner;
-        }
-        if next.git.is_some() {
-            self.git = next.git;
-        }
+        self.agent.merge(next.agent);
+        self.hunk.merge(next.hunk);
+        self.runner.merge(next.runner);
+        self.git.merge(next.git);
     }
 }
 
-impl EnvConfig {
+impl Merge for EnvConfig {
     fn merge(&mut self, next: EnvConfig) {
-        if next.direnv.is_some() {
-            self.direnv = next.direnv;
-        }
+        self.direnv.merge(next.direnv);
     }
 }
 
-impl QuickStartConfig {
+impl Merge for QuickStartConfig {
     fn merge(&mut self, next: QuickStartConfig) {
         self.setup.merge(next.setup);
     }
 }
 
-impl QuickStartSetupConfig {
-    fn merge(&mut self, mut next: QuickStartSetupConfig) {
-        self.commands.append(&mut next.commands);
+impl Merge for QuickStartSetupConfig {
+    fn merge(&mut self, next: QuickStartSetupConfig) {
+        self.commands.merge(next.commands);
     }
 }
 

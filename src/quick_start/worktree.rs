@@ -1,24 +1,16 @@
 use super::{QuickStartForm, quick_start_name};
-use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
-use crate::layout::create_workspace_with_label;
-use crate::util::{first_string, non_empty_env, slugify};
+use crate::herdr::{CreatedWorktree, HerdrClient};
+use crate::ids::WorkspaceId;
+use crate::util::{non_empty_env, slugify};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-#[derive(Debug)]
-pub(super) struct CreatedWorktree {
-    pub(super) workspace_id: String,
-    pub(super) initial_tab_id: Option<String>,
-    pub(super) path: PathBuf,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FlatWorktreeRecord {
-    workspace_id: String,
+    workspace_id: WorkspaceId,
     source_cwd: PathBuf,
     path: PathBuf,
     branch: String,
@@ -31,82 +23,38 @@ struct FlatWorktreeRegistry {
 }
 
 pub(super) fn create_worktree(
-    socket_path: &Path,
+    client: &HerdrClient,
     cwd: &Path,
     branch: &str,
     base: Option<&str>,
     prompt: &str,
     grouped: bool,
 ) -> Result<CreatedWorktree> {
-    let cwd_string = cwd.to_string_lossy().to_string();
     let label = workspace_label(branch, prompt);
-    let mut payload = json!({
-        "cwd": cwd_string,
-        "branch": branch,
-        "label": label.clone(),
-        "focus": grouped,
-    });
-    if let Some(base) = base.map(str::trim).filter(|base| !base.is_empty()) {
-        payload["base"] = json!(base);
-    }
-
-    let result = socket_call(socket_path, "worktree.create", payload)
+    let created = client
+        .create_worktree(cwd, branch, base, &label, grouped)
         .context("failed to create quick-start worktree")?;
 
-    let workspace_id = first_string(
-        &result,
-        &[
-            &["workspace", "workspace_id"],
-            &["workspace", "id"],
-            &["workspace_id"],
-        ],
-    )
-    .ok_or_else(|| anyhow!("worktree.create response did not include a workspace id: {result}"))?;
-
-    let initial_tab_id = first_string(
-        &result,
-        &[
-            &["tab", "tab_id"],
-            &["tab", "id"],
-            &["root_pane", "tab_id"],
-            &["pane", "tab_id"],
-            &["tab_id"],
-        ],
-    );
-
-    let path = first_string(
-        &result,
-        &[&["worktree", "path"], &["workspace", "cwd"], &["path"]],
-    )
-    .map(PathBuf::from)
-    .ok_or_else(|| anyhow!("worktree.create response did not include a checkout path: {result}"))?;
-
     if grouped {
-        return Ok(CreatedWorktree {
-            workspace_id,
-            initial_tab_id,
-            path,
-        });
+        return Ok(created);
     }
+    let path = created.path;
 
     // Herdr has no "create a worktree but show it as a top-level workspace"
     // method. Let Herdr choose and create the checkout under its configured
     // worktree directory, close only the grouped workspace state, then reopen
     // the same checkout as an ordinary workspace. workspace.close does not run
     // `git worktree remove`, so the checkout remains intact.
-    socket_call(
-        socket_path,
-        "workspace.close",
-        json!({ "workspace_id": workspace_id }),
-    )
-    .with_context(|| {
-        format!(
-            "failed to close temporary grouped workspace; worktree remains at {}",
-            path.display()
-        )
-    })?;
+    client
+        .close_workspace(&created.workspace_id)
+        .with_context(|| {
+            format!(
+                "failed to close temporary grouped workspace; worktree remains at {}",
+                path.display()
+            )
+        })?;
 
-    let workspace = match create_workspace_with_label(socket_path, &path, &label) {
+    let workspace = match client.create_workspace(&path, &label) {
         Ok(workspace) => workspace,
         Err(error) => {
             let rollback = git_worktree_remove(cwd, &path);
@@ -146,8 +94,8 @@ pub(super) fn create_worktree(
 }
 
 pub(super) fn remove_current_flat_worktree() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let source = resolve_invocation_source(&socket_path)?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
     let mut registry = load_flat_worktree_registry()?;
     let Some(index) = registry
         .worktrees
@@ -162,15 +110,11 @@ pub(super) fn remove_current_flat_worktree() -> Result<()> {
     let record = registry.worktrees[index].clone();
 
     ensure_worktree_clean(&record.path)?;
-    socket_call(
-        &socket_path,
-        "workspace.close",
-        json!({ "workspace_id": record.workspace_id }),
-    )
-    .with_context(|| format!("failed to close workspace {}", record.workspace_id))?;
+    client.close_workspace(&record.workspace_id)?;
 
     if let Err(remove_error) = git_worktree_remove(&record.source_cwd, &record.path) {
-        let restored = create_workspace_with_label(&socket_path, &record.path, &record.label)
+        let restored = client
+            .create_workspace(&record.path, &record.label)
             .context("failed to restore the workspace after Git refused worktree removal")?;
         registry.worktrees[index].workspace_id = restored.workspace_id;
         save_flat_worktree_registry(&registry)?;

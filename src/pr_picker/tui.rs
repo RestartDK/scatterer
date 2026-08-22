@@ -1,8 +1,6 @@
-use super::agents::load_pr_rows;
 use super::github::{OpenPrOutcome, open_pr_in_browser};
-use super::{CheckState, PrRow, PrState, pr_state_icon};
-use crate::focus::focus_pane;
-use crate::herdr::herdr_socket_path;
+use super::{CheckState, PrRow, PrState, ReviewDecision};
+use crate::herdr::HerdrClient;
 use crate::terminal_session::TerminalSession;
 use crate::theme::PickerPalette;
 use crate::util::{command_exists, copy_to_terminal_clipboard, debug_log, is_ssh_session};
@@ -80,12 +78,13 @@ enum PrPickerAction {
 
 pub(super) fn run_pr_picker_tui() -> Result<()> {
     debug_log("run_pr_picker_tui start");
+    let client = HerdrClient::from_env()?;
     let mut session = TerminalSession::enter(false)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
     terminal.clear().context("failed to clear terminal")?;
 
-    let result = run_pr_picker_loop(&mut terminal);
+    let result = run_pr_picker_loop(&mut terminal, &client);
     terminal.show_cursor().ok();
     drop(terminal);
     let cleanup = session.finish();
@@ -98,7 +97,9 @@ pub(super) fn run_pr_picker_tui() -> Result<()> {
     debug_log(&format!("run_pr_picker_tui action={action:?}"));
     if let Some(action) = action {
         match action {
-            PrPickerAction::Focus(row) => focus_pane(&row.workspace_id, &row.pane_id)?,
+            PrPickerAction::Focus(row) => {
+                client.focus_agent_pane(&row.workspace_id, &row.pane_id)?
+            }
         }
     }
 
@@ -107,9 +108,9 @@ pub(super) fn run_pr_picker_tui() -> Result<()> {
 
 fn run_pr_picker_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    client: &HerdrClient,
 ) -> Result<Option<PrPickerAction>> {
-    let socket_path = herdr_socket_path()?;
-    let (rows, status) = match load_pr_rows(&socket_path) {
+    let (rows, status) = match PrRow::load_all(client) {
         Ok(rows) if rows.is_empty() => (
             rows,
             Some("No PRs found for active Herdr agents".to_string()),
@@ -174,7 +175,7 @@ fn run_pr_picker_loop(
                             };
                         }
                     }
-                    KeyCode::Char('r') => match load_pr_rows(&socket_path) {
+                    KeyCode::Char('r') => match PrRow::load_all(client) {
                         Ok(rows) => {
                             app.rows = rows;
                             app.clamp_selection();
@@ -350,7 +351,7 @@ fn pr_row_line(
     let base = row_style(selected, palette);
     let state_style = base.fg(pr_state_color(row.state, palette));
     let check_style = base.fg(check_state_color(row.checks, palette));
-    let review = review_label(row.review.as_deref());
+    let review = review_label(row.review);
     let total_changed = row.additions + row.deletions;
     let title_width = usize::from(max_width).saturating_sub(76).max(18);
 
@@ -361,19 +362,11 @@ fn pr_row_line(
             base.add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(
-                "{} {:<7}",
-                pr_state_icon(row.state),
-                pr_state_label(row.state)
-            ),
+            format!("{} {:<7}", row.state.icon(), row.state.label()),
             state_style,
         ),
         Span::styled(
-            format!(
-                "{} {:<8}",
-                check_state_icon(row.checks),
-                check_state_label(row.checks)
-            ),
+            format!("{} {:<8}", row.checks.icon(), row.checks.label()),
             check_style,
         ),
         Span::styled(format!("Δ{:<5}", total_changed), base.fg(palette.yellow)),
@@ -389,7 +382,7 @@ fn pr_row_line(
         ),
         Span::styled(
             format!("{:<9}", review),
-            base.fg(review_color(review, palette)),
+            base.fg(review_color(row.review, palette)),
         ),
         Span::styled(truncate(&row.title, title_width), base),
     ])
@@ -418,18 +411,18 @@ fn selected_detail_lines(
         ]),
         Line::from(vec![
             Span::styled(
-                pr_state_label(row.state),
+                row.state.label(),
                 Style::default().fg(pr_state_color(row.state, palette)),
             ),
             Span::raw(" · "),
             Span::styled(
-                check_state_label(row.checks),
+                row.checks.label(),
                 Style::default().fg(check_state_color(row.checks, palette)),
             ),
             Span::raw(" · "),
             Span::styled(
-                review_label(row.review.as_deref()),
-                Style::default().fg(review_color(review_label(row.review.as_deref()), palette)),
+                review_label(row.review),
+                Style::default().fg(review_color(row.review, palette)),
             ),
             Span::raw(format!(" · {} comments", row.comments)),
         ]),
@@ -483,18 +476,6 @@ fn row_style(selected: bool, palette: &PickerPalette) -> Style {
 }
 
 const COMMENT_ICON: &str = "\u{F442}";
-const CHECK_PASS_ICON: &str = "\u{F4A4}";
-const CHECK_PENDING_ICON: &str = "\u{F4AA}";
-const CHECK_FAIL_ICON: &str = "\u{F530}";
-
-fn pr_state_label(state: PrState) -> &'static str {
-    match state {
-        PrState::Open => "OPEN",
-        PrState::Draft => "DRAFT",
-        PrState::Merged => "MERGED",
-        PrState::Closed => "CLOSED",
-    }
-}
 
 fn pr_state_color(state: PrState, palette: &PickerPalette) -> Color {
     match state {
@@ -502,24 +483,6 @@ fn pr_state_color(state: PrState, palette: &PickerPalette) -> Color {
         PrState::Draft => palette.overlay0,
         PrState::Merged => palette.accent,
         PrState::Closed => palette.red,
-    }
-}
-
-fn check_state_label(state: CheckState) -> &'static str {
-    match state {
-        CheckState::Pass => "CI OK",
-        CheckState::Pending => "CI WAIT",
-        CheckState::Fail => "CI FAIL",
-        CheckState::None => "CI -",
-    }
-}
-
-fn check_state_icon(state: CheckState) -> &'static str {
-    match state {
-        CheckState::Pass => CHECK_PASS_ICON,
-        CheckState::Pending => CHECK_PENDING_ICON,
-        CheckState::Fail => CHECK_FAIL_ICON,
-        CheckState::None => "-",
     }
 }
 
@@ -532,22 +495,19 @@ fn check_state_color(state: CheckState, palette: &PickerPalette) -> Color {
     }
 }
 
-fn review_label(review: Option<&str>) -> &'static str {
+fn review_label(review: Option<ReviewDecision>) -> &'static str {
     match review {
-        Some("APPROVED") => "approved",
-        Some("CHANGES_REQUESTED") => "changes",
-        Some("REVIEW_REQUIRED") => "review",
-        Some("REVIEWED") => "reviewed",
-        _ => "review -",
+        Some(decision) => decision.label(),
+        None => "review -",
     }
 }
 
-fn review_color(review: &str, palette: &PickerPalette) -> Color {
+fn review_color(review: Option<ReviewDecision>, palette: &PickerPalette) -> Color {
     match review {
-        "approved" | "APPROVED" => palette.green,
-        "changes" | "CHANGES_REQUESTED" => palette.red,
-        "review" | "REVIEW_REQUIRED" => palette.yellow,
-        _ => palette.overlay0,
+        Some(ReviewDecision::Approved) => palette.green,
+        Some(ReviewDecision::ChangesRequested) => palette.red,
+        Some(ReviewDecision::ReviewRequired) => palette.yellow,
+        None => palette.overlay0,
     }
 }
 

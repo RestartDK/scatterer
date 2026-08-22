@@ -1,31 +1,26 @@
 use crate::config::{ProjectConfig, load_project_config};
 use crate::git::{git_branch, git_parent_branch};
-use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
+use crate::herdr::{CreatedWorkspace, HerdrClient, Method};
+use crate::ids::{PaneId, TabId, WorkspaceId};
 use crate::pane_env;
-use crate::util::{first_string, shell_quote};
+use crate::util::shell_quote;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
 
 #[derive(Debug)]
-pub(crate) struct CreatedWorkspace {
-    pub(crate) workspace_id: String,
-    pub(crate) initial_tab_id: String,
-}
-
-#[derive(Debug)]
 pub(crate) struct AppliedLayout {
-    pub(crate) agent_pane_id: String,
+    pub(crate) agent_pane_id: PaneId,
 }
 
 pub(crate) fn apply_layout() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let source = resolve_invocation_source(&socket_path)?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
     let (config, config_path) = load_project_config(&source.cwd)?;
-    let created = create_workspace(&socket_path, &source.cwd)?;
+    let created = create_workspace(&client, &source.cwd)?;
 
     apply_scatterer_layout(
-        &socket_path,
+        &client,
         &created.workspace_id,
         Some(&created.initial_tab_id),
         &source.cwd,
@@ -51,9 +46,9 @@ pub(crate) fn apply_layout() -> Result<()> {
 }
 
 pub(crate) fn apply_scatterer_layout(
-    socket_path: &Path,
-    workspace_id: &str,
-    replace_tab_id: Option<&str>,
+    client: &HerdrClient,
+    workspace_id: &WorkspaceId,
+    replace_tab_id: Option<&TabId>,
     cwd: &Path,
     config: &ProjectConfig,
     parent_branch_hint: Option<&str>,
@@ -90,7 +85,7 @@ pub(crate) fn apply_scatterer_layout(
     });
 
     let agent_layout = apply_tab(
-        socket_path,
+        client,
         workspace_id,
         replace_tab_id,
         "agent",
@@ -102,7 +97,7 @@ pub(crate) fn apply_scatterer_layout(
     })?;
     if let Some(runner) = runner {
         apply_tab(
-            socket_path,
+            client,
             workspace_id,
             None,
             "runner",
@@ -112,7 +107,7 @@ pub(crate) fn apply_scatterer_layout(
     }
     if let Some(git) = git {
         apply_tab(
-            socket_path,
+            client,
             workspace_id,
             None,
             "git",
@@ -124,56 +119,9 @@ pub(crate) fn apply_scatterer_layout(
     Ok(AppliedLayout { agent_pane_id })
 }
 
-pub(crate) fn create_workspace(socket_path: &Path, cwd: &Path) -> Result<CreatedWorkspace> {
-    let label = workspace_label(cwd);
-    create_workspace_with_label(socket_path, cwd, &label)
-}
-
-pub(crate) fn create_workspace_with_label(
-    socket_path: &Path,
-    cwd: &Path,
-    label: &str,
-) -> Result<CreatedWorkspace> {
-    let cwd_string = cwd.to_string_lossy().to_string();
-    let result = socket_call(
-        socket_path,
-        "workspace.create",
-        json!({
-            "cwd": cwd_string,
-            "label": label,
-            "focus": true,
-        }),
-    )
-    .context("failed to create Scatterer workspace")?;
-
-    let workspace_id = first_string(
-        &result,
-        &[
-            &["workspace", "workspace_id"],
-            &["workspace", "id"],
-            &["workspace_id"],
-        ],
-    )
-    .ok_or_else(|| anyhow!("workspace.create response did not include a workspace id: {result}"))?;
-
-    let initial_tab_id = first_string(
-        &result,
-        &[
-            &["tab", "tab_id"],
-            &["tab", "id"],
-            &["root_pane", "tab_id"],
-            &["pane", "tab_id"],
-            &["tab_id"],
-        ],
-    )
-    .ok_or_else(|| {
-        anyhow!("workspace.create response did not include an initial tab id: {result}")
-    })?;
-
-    Ok(CreatedWorkspace {
-        workspace_id,
-        initial_tab_id,
-    })
+/// Create a workspace labeled after the current branch (or directory name).
+pub(crate) fn create_workspace(client: &HerdrClient, cwd: &Path) -> Result<CreatedWorkspace> {
+    client.create_workspace(cwd, &workspace_label(cwd))
 }
 
 fn workspace_label(cwd: &Path) -> String {
@@ -218,9 +166,9 @@ fn default_hunk_command(cwd: &Path, parent_branch_hint: Option<&str>) -> String 
 }
 
 fn apply_tab(
-    socket_path: &Path,
-    workspace_id: &str,
-    replace_tab_id: Option<&str>,
+    client: &HerdrClient,
+    workspace_id: &WorkspaceId,
+    replace_tab_id: Option<&TabId>,
     tab_label: &str,
     root: Value,
     focus: bool,
@@ -237,19 +185,20 @@ fn apply_tab(
     params.insert("focus".to_string(), json!(focus));
     params.insert("root".to_string(), root);
 
-    socket_call(socket_path, "layout.apply", Value::Object(params))
+    client
+        .call(Method::LayoutApply, Value::Object(params))
         .with_context(|| format!("failed to apply '{tab_label}' tab"))
 }
 
-fn pane_id_with_label(result: &Value, expected_label: &str) -> Option<String> {
-    fn visit(node: &Value, expected_label: &str) -> Option<String> {
+fn pane_id_with_label(result: &Value, expected_label: &str) -> Option<PaneId> {
+    fn visit(node: &Value, expected_label: &str) -> Option<PaneId> {
         if node.get("type").and_then(Value::as_str) == Some("pane")
             && node.get("label").and_then(Value::as_str) == Some(expected_label)
         {
             return node
                 .get("pane_id")
                 .and_then(Value::as_str)
-                .map(ToString::to_string);
+                .map(PaneId::from);
         }
         visit(node.get("first")?, expected_label)
             .or_else(|| visit(node.get("second")?, expected_label))
@@ -284,6 +233,9 @@ mod tests {
             }
         });
 
-        assert_eq!(pane_id_with_label(&result, "pi").as_deref(), Some("w1:p2"));
+        assert_eq!(
+            pane_id_with_label(&result, "pi"),
+            Some(PaneId::from("w1:p2"))
+        );
     }
 }
