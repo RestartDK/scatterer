@@ -4,9 +4,9 @@ mod worktree;
 
 use crate::config::load_project_config;
 use crate::git::{git_branch, remember_parent_branch, switch_or_create_branch};
-use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
+use crate::herdr::{Entrypoint, HerdrClient, Placement};
 use crate::layout::{apply_scatterer_layout, create_workspace};
-use crate::util::{non_empty_env, slugify};
+use crate::util::slugify;
 use crate::worktree_setup::run_worktree_setup;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -76,23 +76,19 @@ pub(crate) struct QuickStartForm {
 }
 
 pub(crate) fn open() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let plugin_id =
-        non_empty_env("HERDR_PLUGIN_ID").unwrap_or_else(|| "daniel.scatterer".to_string());
-    let source = resolve_invocation_source(&socket_path)?;
-    socket_call(
-        &socket_path,
-        "plugin.pane.open",
-        json!({
-            "plugin_id": plugin_id,
-            "entrypoint": "quick-start",
-            "placement": "popup",
-            "env": {
-                "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
-            },
-        }),
-    )
-    .context("failed to open Scatterer quick-start popup")?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
+    client
+        .open_plugin_pane(
+            Entrypoint::QuickStart,
+            Placement::Popup,
+            json!({
+                "env": {
+                    "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
+                },
+            }),
+        )
+        .context("failed to open Scatterer quick-start popup")?;
     Ok(())
 }
 
@@ -106,19 +102,19 @@ pub(crate) fn run() -> Result<()> {
         return Ok(());
     };
 
-    let socket_path = herdr_socket_path()?;
-    let source = resolve_invocation_source(&socket_path)?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
 
     match form.target {
-        QuickStartTarget::Workspace => run_workspace_quick_start(&socket_path, &source.cwd, form),
+        QuickStartTarget::Workspace => run_workspace_quick_start(&client, &source.cwd, form),
         QuickStartTarget::Worktree | QuickStartTarget::FlatWorktree => {
-            run_worktree_quick_start(&socket_path, &source.cwd, form)
+            run_worktree_quick_start(&client, &source.cwd, form)
         }
     }
 }
 
 fn run_workspace_quick_start(
-    socket_path: &std::path::Path,
+    client: &HerdrClient,
     source_cwd: &std::path::Path,
     form: QuickStartForm,
 ) -> Result<()> {
@@ -132,13 +128,13 @@ fn run_workspace_quick_start(
     }
 
     let (config, config_path) = load_project_config(source_cwd)?;
-    let created = create_workspace(socket_path, source_cwd)?;
+    let created = create_workspace(client, source_cwd)?;
     let session_name = requested_branch
         .clone()
         .or_else(|| git_branch(source_cwd))
         .unwrap_or_else(|| quick_start_name(&form.prompt));
     let layout = apply_scatterer_layout(
-        socket_path,
+        client,
         &created.workspace_id,
         Some(&created.initial_tab_id),
         source_cwd,
@@ -147,7 +143,7 @@ fn run_workspace_quick_start(
         true,
     )?;
     pi::start_pi_agent(
-        socket_path,
+        client,
         &layout.agent_pane_id,
         &created.workspace_id,
         &form,
@@ -172,7 +168,7 @@ fn run_workspace_quick_start(
 }
 
 fn run_worktree_quick_start(
-    socket_path: &std::path::Path,
+    client: &HerdrClient,
     source_cwd: &std::path::Path,
     form: QuickStartForm,
 ) -> Result<()> {
@@ -180,7 +176,7 @@ fn run_worktree_quick_start(
     let branch = worktree::branch_for_form(&form);
     let base = worktree::base_for_form(&form);
     let created = worktree::create_worktree(
-        socket_path,
+        client,
         source_cwd,
         &branch,
         base.as_deref(),
@@ -192,16 +188,16 @@ fn run_worktree_quick_start(
     }
     run_worktree_setup(source_cwd, &created.path, &config)?;
     let layout = apply_scatterer_layout(
-        socket_path,
+        client,
         &created.workspace_id,
-        created.initial_tab_id.as_deref(),
+        created.initial_tab_id.as_ref(),
         &created.path,
         &config,
         base.as_deref(),
         true,
     )?;
     pi::start_pi_agent(
-        socket_path,
+        client,
         &layout.agent_pane_id,
         &created.workspace_id,
         &form,

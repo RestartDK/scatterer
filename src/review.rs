@@ -1,4 +1,5 @@
-use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
+use crate::herdr::{Entrypoint, HerdrClient, Placement};
+use crate::ids::{PaneId, TabId, WorkspaceId};
 use crate::util::{non_empty_env, string_at};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -6,56 +7,50 @@ use std::env;
 use std::path::Path;
 use std::process::Command;
 
-const REVIEW_ENTRYPOINT: &str = "review";
 const REVIEW_PANE_TITLE: &str = "Review";
 
 pub(crate) fn toggle() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let plugin_id =
-        non_empty_env("HERDR_PLUGIN_ID").unwrap_or_else(|| "daniel.scatterer".to_string());
-    let source = resolve_invocation_source(&socket_path)?;
-    let current = current_pane(&socket_path)?;
-    let pane_id = required_string(&current, &["pane_id"])?;
-    let workspace_id = required_string(&current, &["workspace_id"])?;
-    let tab_id = required_string(&current, &["tab_id"])?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
+    let caller_pane_id = non_empty_env("HERDR_PANE_ID")
+        .map(PaneId::from)
+        .or_else(context_pane_id);
+    let current = client.current_pane(caller_pane_id.as_ref())?;
+    let pane_id = PaneId::from(required_string(&current, &["pane_id"])?);
+    let workspace_id = WorkspaceId::from(required_string(&current, &["workspace_id"])?);
+    let tab_id = TabId::from(required_string(&current, &["tab_id"])?);
 
-    if let Some(existing) = find_review_pane(&socket_path, &workspace_id, &tab_id)? {
-        socket_call(&socket_path, "pane.close", json!({ "pane_id": existing }))
+    if let Some(existing) = find_review_pane(&client, &workspace_id, &tab_id)? {
+        client
+            .close_pane(&existing)
             .context("failed to close Review pane")?;
         return Ok(());
     }
 
     if !is_git_repository(&source.cwd) {
-        socket_call(
-            &socket_path,
-            "notification.show",
-            json!({
-                "title": "Review unavailable",
-                "body": format!("Not a Git repository: {}", source.cwd.display()),
-                "position": "bottom-right",
-                "sound": "none",
-            }),
-        )
-        .context("failed to show the Review error notification")?;
+        client
+            .show_notification(
+                "Review unavailable",
+                &format!("Not a Git repository: {}", source.cwd.display()),
+            )
+            .context("failed to show the Review error notification")?;
         return Ok(());
     }
 
-    socket_call(
-        &socket_path,
-        "plugin.pane.open",
-        json!({
-            "plugin_id": plugin_id,
-            "entrypoint": REVIEW_ENTRYPOINT,
-            "placement": "split",
-            "target_pane_id": pane_id,
-            "direction": "right",
-            "focus": true,
-            "env": {
-                "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
-            },
-        }),
-    )
-    .context("failed to open Review pane")?;
+    client
+        .open_plugin_pane(
+            Entrypoint::Review,
+            Placement::Split,
+            json!({
+                "target_pane_id": pane_id,
+                "direction": "right",
+                "focus": true,
+                "env": {
+                    "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
+                },
+            }),
+        )
+        .context("failed to open Review pane")?;
     Ok(())
 }
 
@@ -66,8 +61,8 @@ pub(crate) fn run() -> Result<()> {
 }
 
 fn run_tuicr() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let source = resolve_invocation_source(&socket_path)?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
     env::set_current_dir(&source.cwd)
         .with_context(|| format!("failed to enter {}", source.cwd.display()))?;
 
@@ -82,36 +77,23 @@ fn run_tuicr() -> Result<()> {
 }
 
 fn close_own_pane() {
-    let Some(pane_id) = non_empty_env("HERDR_PANE_ID") else {
+    let Some(pane_id) = non_empty_env("HERDR_PANE_ID").map(PaneId::from) else {
         return;
     };
-    let Ok(socket_path) = herdr_socket_path() else {
+    let Ok(client) = HerdrClient::from_env() else {
         return;
     };
-    let _ = socket_call(&socket_path, "pane.close", json!({ "pane_id": pane_id }));
+    let _ = client.close_pane(&pane_id);
 }
 
-fn current_pane(socket_path: &Path) -> Result<Value> {
-    let caller_pane_id = non_empty_env("HERDR_PANE_ID").or_else(context_pane_id);
-    let result = socket_call(
-        socket_path,
-        "pane.current",
-        json!({ "caller_pane_id": caller_pane_id }),
-    )
-    .context("failed to resolve the focused Herdr pane")?;
-    result
-        .get("pane")
-        .cloned()
-        .ok_or_else(|| anyhow!("Herdr pane.current response did not include a pane: {result}"))
-}
-
-fn context_pane_id() -> Option<String> {
+fn context_pane_id() -> Option<PaneId> {
     let context = env::var("HERDR_PLUGIN_CONTEXT_JSON")
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())?;
     string_at(&context, &["focused_pane", "pane_id"])
         .or_else(|| string_at(&context, &["pane", "pane_id"]))
         .or_else(|| string_at(&context, &["pane_id"]))
+        .map(PaneId::from)
 }
 
 fn is_git_repository(cwd: &Path) -> bool {
@@ -127,33 +109,24 @@ fn is_git_repository(cwd: &Path) -> bool {
 }
 
 fn find_review_pane(
-    socket_path: &Path,
-    workspace_id: &str,
-    tab_id: &str,
-) -> Result<Option<String>> {
-    let result = socket_call(
-        socket_path,
-        "pane.list",
-        json!({ "workspace_id": workspace_id }),
-    )
-    .context("failed to list Herdr panes")?;
-    let panes = result
-        .get("panes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("Herdr pane.list response did not include panes: {result}"))?;
+    client: &HerdrClient,
+    workspace_id: &WorkspaceId,
+    tab_id: &TabId,
+) -> Result<Option<PaneId>> {
+    let panes = client.list_panes(Some(workspace_id))?;
 
-    for pane in panes {
-        if string_at(pane, &["tab_id"]).as_deref() != Some(tab_id) {
+    for pane in &panes {
+        if string_at(pane, &["tab_id"]).as_deref() != Some(tab_id.as_str()) {
             continue;
         }
-        if is_review_pane(socket_path, pane) {
-            return Ok(string_at(pane, &["pane_id"]));
+        if is_review_pane(client, pane) {
+            return Ok(string_at(pane, &["pane_id"]).map(PaneId::from));
         }
     }
     Ok(None)
 }
 
-fn is_review_pane(socket_path: &Path, pane: &Value) -> bool {
+fn is_review_pane(client: &HerdrClient, pane: &Value) -> bool {
     if ["label", "title"]
         .iter()
         .filter_map(|field| string_at(pane, &[*field]))
@@ -162,14 +135,10 @@ fn is_review_pane(socket_path: &Path, pane: &Value) -> bool {
         return true;
     }
 
-    let Some(pane_id) = string_at(pane, &["pane_id"]) else {
+    let Some(pane_id) = string_at(pane, &["pane_id"]).map(PaneId::from) else {
         return false;
     };
-    let Ok(result) = socket_call(
-        socket_path,
-        "pane.process_info",
-        json!({ "pane_id": pane_id }),
-    ) else {
+    let Ok(result) = client.pane_process_info(&pane_id) else {
         return false;
     };
     result

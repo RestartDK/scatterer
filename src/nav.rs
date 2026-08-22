@@ -3,12 +3,14 @@ use anyhow::{Context, Result, anyhow};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use std::sync::OnceLock;
 
-#[derive(Clone, Copy, Debug)]
-enum Direction {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Direction {
     Left,
     Down,
     Up,
@@ -28,18 +30,7 @@ enum PassthroughProcess {
     Vim,
 }
 
-pub(crate) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
-    let direction = args
-        .next()
-        .ok_or_else(|| anyhow!("nav missing direction: expected left, down, up, or right"))?;
-    if let Some(extra) = args.next() {
-        return Err(anyhow!("unexpected nav argument '{extra}'"));
-    }
-    run_direction(&direction)
-}
-
-pub(crate) fn run_direction(direction: &str) -> Result<()> {
-    let direction = Direction::parse(direction)?;
+pub(crate) fn run(direction: Direction) -> Result<()> {
     let herdr = non_empty_env("HERDR_BIN_PATH").unwrap_or_else(|| "herdr".to_string());
     let env_pane_id = non_empty_env("HERDR_PANE_ID");
     let process_info = focused_process_info(&herdr, env_pane_id.as_deref()).unwrap_or_default();
@@ -52,9 +43,8 @@ pub(crate) fn run_direction(direction: &str) -> Result<()> {
         )
         .with_context(|| {
             format!(
-                "failed to send {} to focused {} pane",
+                "failed to send {} to focused {process} pane",
                 direction.key(),
-                process.label()
             )
         });
     }
@@ -69,11 +59,13 @@ pub(crate) fn run_direction(direction: &str) -> Result<()> {
             "--current",
         ],
     )
-    .with_context(|| format!("failed to focus Herdr pane {}", direction.as_str()))
+    .with_context(|| format!("failed to focus Herdr pane {direction}"))
 }
 
-impl Direction {
-    fn parse(value: &str) -> Result<Self> {
+impl FromStr for Direction {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
         match value {
             "left" => Ok(Self::Left),
             "down" => Ok(Self::Down),
@@ -84,7 +76,15 @@ impl Direction {
             )),
         }
     }
+}
 
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Direction {
     fn as_str(self) -> &'static str {
         match self {
             Self::Left => "left",
@@ -154,7 +154,7 @@ fn process_should_receive_key(process: &Value) -> Option<PassthroughProcess> {
         .into_iter()
         .filter_map(|field| string_at(process, &[field]))
         .map(|name| process_basename(&name).to_ascii_lowercase())
-        .find_map(|name| PassthroughProcess::try_from(name.as_str()).ok())
+        .find_map(|name| PassthroughProcess::from_name(&name))
 }
 
 fn descendant_process_should_receive_key(processes: &[Value]) -> Option<PassthroughProcess> {
@@ -176,7 +176,7 @@ fn descendant_process_should_receive_key(processes: &[Value]) -> Option<Passthro
         if let Some(children) = table.children.get(&parent_pid) {
             for child in children {
                 let name = process_basename(&child.command).to_ascii_lowercase();
-                if let Ok(process) = PassthroughProcess::try_from(name.as_str()) {
+                if let Some(process) = PassthroughProcess::from_name(&name) {
                     return Some(process);
                 }
                 stack.push(child.pid);
@@ -187,29 +187,29 @@ fn descendant_process_should_receive_key(processes: &[Value]) -> Option<Passthro
     None
 }
 
-impl TryFrom<&str> for PassthroughProcess {
-    type Error = ();
-
-    fn try_from(name: &str) -> Result<Self, Self::Error> {
+impl PassthroughProcess {
+    /// Total classification: most process names are simply not passthrough
+    /// targets, so this is an `Option`, not a fallible conversion.
+    fn from_name(name: &str) -> Option<Self> {
         if fzf_process_regex().is_match(name) {
-            Ok(Self::Fzf)
+            Some(Self::Fzf)
         } else if ssh_process_regex().is_match(name) {
-            Ok(Self::Ssh)
+            Some(Self::Ssh)
         } else if vim_process_regex().is_match(name) {
-            Ok(Self::Vim)
+            Some(Self::Vim)
         } else {
-            Err(())
+            None
         }
     }
 }
 
-impl PassthroughProcess {
-    fn label(self) -> &'static str {
-        match self {
+impl fmt::Display for PassthroughProcess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Fzf => "fzf",
             Self::Ssh => "SSH",
             Self::Vim => "Vim/Neovim",
-        }
+        })
     }
 }
 

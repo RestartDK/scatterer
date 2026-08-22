@@ -1,15 +1,15 @@
 use super::{QuickStartForm, quick_start_name};
-use crate::herdr::socket_call;
+use crate::herdr::{HerdrClient, Method};
+use crate::ids::{PaneId, WorkspaceId};
 use crate::util::slugify;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub(super) fn start_pi_agent(
-    socket_path: &Path,
-    pane_id: &str,
-    workspace_id: &str,
+    client: &HerdrClient,
+    pane_id: &PaneId,
+    workspace_id: &WorkspaceId,
     form: &QuickStartForm,
     session_name: &str,
 ) -> Result<()> {
@@ -21,30 +21,30 @@ pub(super) fn start_pi_agent(
         args.push(model.clone());
     }
 
-    socket_call(
-        socket_path,
-        "agent.start",
-        json!({
-            "name": agent_name,
-            "kind": "pi",
-            "pane_id": pane_id,
-            "args": args,
-            "timeout_ms": 60_000,
-        }),
-    )
-    .with_context(|| format!("failed to start Pi in pane {pane_id}"))?;
+    client
+        .call(
+            Method::AgentStart,
+            json!({
+                "name": agent_name,
+                "kind": "pi",
+                "pane_id": pane_id,
+                "args": args,
+                "timeout_ms": 60_000,
+            }),
+        )
+        .with_context(|| format!("failed to start Pi in pane {pane_id}"))?;
 
     let prompt = form.prompt.trim();
     if !prompt.is_empty() {
-        socket_call(
-            socket_path,
-            "agent.prompt",
-            json!({
-                "target": pane_id,
-                "text": prompt,
-            }),
-        )
-        .with_context(|| format!("failed to prompt Pi in pane {pane_id}"))?;
+        client
+            .call(
+                Method::AgentPrompt,
+                json!({
+                    "target": pane_id,
+                    "text": prompt,
+                }),
+            )
+            .with_context(|| format!("failed to prompt Pi in pane {pane_id}"))?;
     }
 
     Ok(())
@@ -59,9 +59,9 @@ fn pi_session_name(form: &QuickStartForm, session_name: &str) -> String {
     }
 }
 
-fn herdr_agent_name(session_name: &str, workspace_id: &str) -> String {
+fn herdr_agent_name(session_name: &str, workspace_id: &WorkspaceId) -> String {
     let session = slugify(session_name, 22);
-    let workspace = slugify(workspace_id, 6);
+    let workspace = slugify(workspace_id.as_str(), 6);
     format!("pi-{session}-{workspace}")
         .chars()
         .take(32)
@@ -104,7 +104,10 @@ mod tests {
 
     #[test]
     fn herdr_agent_names_are_strict_and_bounded() {
-        let name = herdr_agent_name("Feature/Very Long Branch With Spaces", "w123456789");
+        let name = herdr_agent_name(
+            "Feature/Very Long Branch With Spaces",
+            &WorkspaceId::from("w123456789"),
+        );
         assert!(name.len() <= 32);
         assert!(name.starts_with("pi-"));
         assert!(

@@ -1,6 +1,6 @@
-use super::{AgentRow, AgentStatus, WorkspaceGroup, load_agent_groups, read_visible_ansi};
-use crate::focus::focus_pane;
-use crate::herdr::herdr_socket_path;
+use super::{AgentRow, WorkspaceGroup};
+use crate::herdr::{AgentStatus, HerdrClient};
+use crate::ids::PaneId;
 use crate::terminal_session::TerminalSession;
 use crate::theme::PickerPalette;
 use ansi_to_tui::IntoText;
@@ -18,7 +18,6 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 use std::io;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -85,7 +84,7 @@ struct PickerLayout {
 
 #[derive(Debug)]
 struct AgentPickerApp {
-    socket_path: PathBuf,
+    client: HerdrClient,
     palette: PickerPalette,
     groups: Vec<WorkspaceGroup>,
     selected: usize,
@@ -93,7 +92,7 @@ struct AgentPickerApp {
     query: String,
     search_focused: bool,
     state_filter: Option<StateFilter>,
-    preview_pane_id: Option<String>,
+    preview_pane_id: Option<PaneId>,
     preview_ansi: String,
     preview_scroll_from_bottom: usize,
     status: Option<String>,
@@ -102,10 +101,10 @@ struct AgentPickerApp {
 }
 
 impl AgentPickerApp {
-    fn new(socket_path: PathBuf) -> Self {
+    fn new(client: HerdrClient) -> Self {
         let now = Instant::now();
         Self {
-            socket_path,
+            client,
             palette: PickerPalette::load(),
             groups: Vec::new(),
             selected: 0,
@@ -259,7 +258,7 @@ impl AgentPickerApp {
         }
         self.last_agent_refresh = Instant::now();
         let previous_pane = self.selected_agent().map(|agent| agent.pane_id);
-        match load_agent_groups(&self.socket_path) {
+        match WorkspaceGroup::load_all(&self.client) {
             Ok(groups) => {
                 self.groups = groups;
                 self.clamp_selection();
@@ -290,13 +289,13 @@ impl AgentPickerApp {
             self.preview_ansi.clear();
             return;
         };
-        let changed_selection = self.preview_pane_id.as_deref() != Some(&agent.pane_id);
+        let changed_selection = self.preview_pane_id.as_ref() != Some(&agent.pane_id);
         if changed_selection {
             self.preview_pane_id = Some(agent.pane_id.clone());
             self.preview_ansi.clear();
             self.preview_scroll_from_bottom = 0;
         }
-        match read_visible_ansi(&self.socket_path, &agent.pane_id) {
+        match self.client.read_pane_visible_ansi(&agent.pane_id) {
             Ok(ansi) => {
                 let ansi = sanitize_preview_ansi(&ansi);
                 if ansi != self.preview_ansi {
@@ -329,13 +328,13 @@ impl AgentPickerApp {
 }
 
 pub(super) fn run_agent_picker_tui() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
+    let client = HerdrClient::from_env()?;
     let mut session = TerminalSession::enter_with_mouse(false, true)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
     terminal.clear().context("failed to clear terminal")?;
 
-    let result = run_agent_picker_loop(&mut terminal, socket_path);
+    let result = run_agent_picker_loop(&mut terminal, client.clone());
     terminal.show_cursor().ok();
     drop(terminal);
     let cleanup = session.finish();
@@ -343,16 +342,16 @@ pub(super) fn run_agent_picker_tui() -> Result<()> {
     let selected = result?;
     cleanup?;
     if let Some(agent) = selected {
-        focus_pane(&agent.workspace_id, &agent.pane_id)?;
+        client.focus_agent_pane(&agent.workspace_id, &agent.pane_id)?;
     }
     Ok(())
 }
 
 fn run_agent_picker_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    socket_path: PathBuf,
+    client: HerdrClient,
 ) -> Result<Option<AgentRow>> {
-    let mut app = AgentPickerApp::new(socket_path);
+    let mut app = AgentPickerApp::new(client);
     app.refresh_agents(true);
     app.refresh_preview(true);
 
@@ -777,7 +776,7 @@ fn render_agent_row(
     let prefix = format!(" {current} {branch} {} ", status_icon(agent.status));
     let meta = format!(
         "{} · {}",
-        short_pane_id(&agent.pane_id),
+        short_pane_id(agent.pane_id.as_str()),
         agent.status.label()
     );
     let available = area
@@ -901,8 +900,8 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &AgentPickerApp) {
         format!(
             " {} · tab {} · pane {} · {} · {}",
             agent.workspace_label,
-            short_tab_id(&agent.tab_id),
-            short_pane_id(&agent.pane_id),
+            short_tab_id(agent.tab_id.as_str()),
+            short_pane_id(agent.pane_id.as_str()),
             agent.agent,
             agent.status.label()
         )

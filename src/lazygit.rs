@@ -1,35 +1,30 @@
-use crate::herdr::{herdr_socket_path, resolve_invocation_source, socket_call};
-use crate::util::non_empty_env;
+use crate::herdr::{Entrypoint, HerdrClient, Placement};
 use anyhow::{Context, Result, anyhow};
 use serde_json::json;
 use std::env;
 use std::process::Command;
 
 pub(crate) fn open() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let plugin_id =
-        non_empty_env("HERDR_PLUGIN_ID").unwrap_or_else(|| "daniel.scatterer".to_string());
-    let source = resolve_invocation_source(&socket_path)?;
-    socket_call(
-        &socket_path,
-        "plugin.pane.open",
-        json!({
-            "plugin_id": plugin_id,
-            "entrypoint": "lazygit",
-            "placement": "overlay",
-            "focus": true,
-            "env": {
-                "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
-            },
-        }),
-    )
-    .context("failed to open lazygit overlay")?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
+    client
+        .open_plugin_pane(
+            Entrypoint::Lazygit,
+            Placement::Overlay,
+            json!({
+                "focus": true,
+                "env": {
+                    "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
+                },
+            }),
+        )
+        .context("failed to open lazygit overlay")?;
     Ok(())
 }
 
 pub(crate) fn run() -> Result<()> {
-    let socket_path = herdr_socket_path()?;
-    let source = resolve_invocation_source(&socket_path)?;
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
     env::set_current_dir(&source.cwd)
         .with_context(|| format!("failed to enter {}", source.cwd.display()))?;
 
