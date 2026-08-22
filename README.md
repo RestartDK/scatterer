@@ -1,6 +1,6 @@
 # Scatterer
 
-Personal Herdr workflow plugin. Scatterer 0.2.0 requires Herdr 0.7.5 or newer.
+Personal Herdr workflow plugin. Scatterer 0.3.0 requires Herdr 0.7.5 or newer.
 
 ## Default layout
 
@@ -228,14 +228,30 @@ Keep these limitations in mind for possible Herdr changes:
    way to refresh connection-scoped environment from the currently attached
    client, or proxy forwarded sockets through a stable Herdr-owned path.
 
+## Nix
+
+The flake exposes the binary as a package, so Nix consumers (for example a
+Home Manager configuration) can install Scatterer without a Rust toolchain:
+
+```sh
+nix run github:RestartDK/scatterer -- apply-layout
+nix build   # ./result/bin/scatterer
+```
+
+Formatting is orchestrated by treefmt (rustfmt, nixfmt, taplo, shfmt) and
+enforced three ways from one config: `nix fmt` locally, a lefthook pre-commit
+hook that the devshell installs automatically (enter via `nix develop` or
+direnv), and `nix flake check` in CI. If a commit is blocked, the fixed files
+are left in the working tree; stage them and retry.
+
 ## Development install
 
-A Nix development shell supplies Rust, Clippy, rustfmt, pkg-config, and Darwin's
-`libiconv` linkage:
+A Nix development shell supplies Rust, Clippy, rustfmt, pkg-config, treefmt,
+Darwin's `libiconv` linkage, and installs the git hooks on entry:
 
 ```sh
 cd ~/Projects/scatterer
-nix develop
+nix develop   # or `direnv allow` once
 cargo test --locked
 herdr plugin link .
 herdr plugin action invoke daniel.scatterer.apply-layout
