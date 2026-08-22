@@ -1,6 +1,6 @@
 # Scatterer
 
-Personal Herdr workflow plugin. Scatterer 0.3.0 requires Herdr 0.7.5 or newer.
+Personal Herdr workflow plugin. Scatterer 0.3.1 requires Herdr 0.7.5 or newer.
 
 ## Default layout
 
@@ -236,6 +236,16 @@ Home Manager configuration) can install Scatterer without a Rust toolchain:
 ```sh
 nix run github:RestartDK/scatterer -- apply-layout
 nix build   # ./result/bin/scatterer
+```
+
+`packages.plugin` is a ready-to-link Herdr plugin root. Its manifest is
+rewritten as data for the immutable store: every action/pane command invokes
+the built binary directly (no `bash scripts/scatterer.sh` launcher, no cargo
+build hook — those only serve development checkouts):
+
+```sh
+nix build .#plugin
+herdr plugin link ./result/share/herdr/plugins/scatterer
 ```
 
 Formatting is orchestrated by treefmt (rustfmt, nixfmt, taplo, shfmt) and

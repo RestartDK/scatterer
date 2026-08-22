@@ -77,13 +77,15 @@
     {
       packages = forAllSystems (
         { pkgs, ... }:
-        rec {
+        let
+          inherit (pkgs) lib;
+
           scatterer = pkgs.rustPlatform.buildRustPackage {
             pname = "scatterer";
-            version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
+            version = (lib.importTOML ./Cargo.toml).package.version;
             src = self;
             cargoLock.lockFile = ./Cargo.lock;
-            buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+            buildInputs = lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
             # The git module's tests exercise real `git init/commit` in temp dirs.
             nativeCheckInputs = [ pkgs.git ];
             meta = {
@@ -92,6 +94,30 @@
               mainProgram = "scatterer";
             };
           };
+
+          # The checked-in manifest targets a development checkout: actions run
+          # `bash scripts/scatterer.sh …`, which rebuilds stale binaries via
+          # cargo. None of that applies to an immutable store path, so the
+          # plugin package rewrites the manifest as data: every command invokes
+          # the built binary directly and the cargo build hook is dropped.
+          manifest = lib.importTOML ./herdr-plugin.toml;
+          storeCommand = command: [ (lib.getExe scatterer) ] ++ lib.drop 2 command;
+          storeManifest = (pkgs.formats.toml { }).generate "herdr-plugin.toml" (
+            builtins.removeAttrs manifest [ "build" ]
+            // {
+              actions = map (action: action // { command = storeCommand action.command; }) manifest.actions;
+              panes = map (pane: pane // { command = storeCommand pane.command; }) manifest.panes;
+            }
+          );
+
+          plugin = pkgs.runCommand "scatterer-herdr-plugin-${manifest.version}" { } ''
+            mkdir -p $out/bin $out/share/herdr/plugins/scatterer
+            ln -s ${lib.getExe scatterer} $out/bin/scatterer
+            ln -s ${storeManifest} $out/share/herdr/plugins/scatterer/herdr-plugin.toml
+          '';
+        in
+        {
+          inherit scatterer plugin;
           default = scatterer;
         }
       );
@@ -102,6 +128,7 @@
         { system, treefmtEval, ... }:
         {
           build = self.packages.${system}.default;
+          plugin = self.packages.${system}.plugin;
           # Same treefmt config as `nix fmt` and the pre-commit hook, run
           # against a writable copy of the tree.
           formatting = treefmtEval.config.build.check self;
