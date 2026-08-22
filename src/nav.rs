@@ -18,7 +18,14 @@ enum Direction {
 #[derive(Debug, Default)]
 struct FocusedProcessInfo {
     pane_id: Option<String>,
-    is_passthrough: bool,
+    passthrough_process: Option<PassthroughProcess>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PassthroughProcess {
+    Fzf,
+    Ssh,
+    Vim,
 }
 
 pub(crate) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
@@ -38,14 +45,18 @@ pub(crate) fn run_direction(direction: &str) -> Result<()> {
     let process_info = focused_process_info(&herdr, env_pane_id.as_deref()).unwrap_or_default();
     let pane_id = env_pane_id.or(process_info.pane_id);
 
-    if process_info.is_passthrough
-        && let Some(pane_id) = pane_id
-    {
+    if let (Some(process), Some(pane_id)) = (process_info.passthrough_process, pane_id) {
         return run_herdr(
             &herdr,
             &["pane", "send-keys", pane_id.as_str(), direction.key()],
         )
-        .with_context(|| format!("failed to send {} to focused Vim/SSH pane", direction.key()));
+        .with_context(|| {
+            format!(
+                "failed to send {} to focused {} pane",
+                direction.key(),
+                process.label()
+            )
+        });
     }
 
     run_herdr(
@@ -127,31 +138,33 @@ fn focused_process_info(herdr: &str, pane_id: Option<&str>) -> Result<FocusedPro
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let is_passthrough = foreground_processes.iter().any(process_should_receive_key)
-        || descendants_should_receive_key(&foreground_processes);
+    let passthrough_process = foreground_processes
+        .iter()
+        .find_map(process_should_receive_key)
+        .or_else(|| descendant_process_should_receive_key(&foreground_processes));
 
     Ok(FocusedProcessInfo {
         pane_id,
-        is_passthrough,
+        passthrough_process,
     })
 }
 
-fn process_should_receive_key(process: &Value) -> bool {
+fn process_should_receive_key(process: &Value) -> Option<PassthroughProcess> {
     ["name", "argv0"]
         .into_iter()
         .filter_map(|field| string_at(process, &[field]))
         .map(|name| process_basename(&name).to_ascii_lowercase())
-        .any(|name| process_name_should_receive_key(&name))
+        .find_map(|name| PassthroughProcess::try_from(name.as_str()).ok())
 }
 
-fn descendants_should_receive_key(processes: &[Value]) -> bool {
+fn descendant_process_should_receive_key(processes: &[Value]) -> Option<PassthroughProcess> {
     let roots = processes.iter().filter_map(process_pid).collect::<Vec<_>>();
     if roots.is_empty() {
-        return false;
+        return None;
     }
 
     let Ok(table) = ProcessTable::load() else {
-        return false;
+        return None;
     };
 
     let mut stack = roots;
@@ -163,19 +176,41 @@ fn descendants_should_receive_key(processes: &[Value]) -> bool {
         if let Some(children) = table.children.get(&parent_pid) {
             for child in children {
                 let name = process_basename(&child.command).to_ascii_lowercase();
-                if process_name_should_receive_key(&name) {
-                    return true;
+                if let Ok(process) = PassthroughProcess::try_from(name.as_str()) {
+                    return Some(process);
                 }
                 stack.push(child.pid);
             }
         }
     }
 
-    false
+    None
 }
 
-fn process_name_should_receive_key(name: &str) -> bool {
-    vim_process_regex().is_match(name) || ssh_process_regex().is_match(name)
+impl TryFrom<&str> for PassthroughProcess {
+    type Error = ();
+
+    fn try_from(name: &str) -> Result<Self, Self::Error> {
+        if fzf_process_regex().is_match(name) {
+            Ok(Self::Fzf)
+        } else if ssh_process_regex().is_match(name) {
+            Ok(Self::Ssh)
+        } else if vim_process_regex().is_match(name) {
+            Ok(Self::Vim)
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl PassthroughProcess {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Fzf => "fzf",
+            Self::Ssh => "SSH",
+            Self::Vim => "Vim/Neovim",
+        }
+    }
 }
 
 fn process_pid(process: &Value) -> Option<u32> {
@@ -247,6 +282,11 @@ fn vim_process_regex() -> &'static Regex {
 fn ssh_process_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"^(ssh|mosh-client)$").expect("valid SSH regex"))
+}
+
+fn fzf_process_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(fzf|fzf-tmux)$").expect("valid fzf regex"))
 }
 
 fn run_herdr(herdr: &str, args: &[&str]) -> Result<()> {
