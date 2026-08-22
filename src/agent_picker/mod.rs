@@ -46,10 +46,11 @@ impl WorkspaceGroup {
         let mut groups = workspaces
             .iter()
             .filter_map(|workspace| {
-            let workspace_id = string_at(workspace, &["workspace_id"]).map(WorkspaceId::from)?;
-            let label = string_at(workspace, &["label"])
-                .unwrap_or_else(|| workspace_id.as_str().to_string());
-            Some(WorkspaceGroup {
+                let workspace_id =
+                    string_at(workspace, &["workspace_id"]).map(WorkspaceId::from)?;
+                let label = string_at(workspace, &["label"])
+                    .unwrap_or_else(|| workspace_id.as_str().to_string());
+                Some(WorkspaceGroup {
                     workspace_id,
                     label,
                     agents: Vec::new(),
@@ -63,52 +64,53 @@ impl WorkspaceGroup {
             .collect::<HashMap<_, _>>();
 
         for value in &agents {
-        let Some(workspace_id) = string_at(value, &["workspace_id"]).map(WorkspaceId::from) else {
-            continue;
-        };
-        let Some(pane_id) = string_at(value, &["pane_id"]).map(PaneId::from) else {
-            continue;
-        };
-        let tab_id = TabId::from(string_at(value, &["tab_id"]).unwrap_or_default());
-        let display_agent = string_at(value, &["display_agent"])
-            .or_else(|| string_at(value, &["agent"]))
-            .unwrap_or_else(|| "agent".to_string());
-        let label = string_at(value, &["name"])
-            .or_else(|| string_at(value, &["title"]))
-            .or_else(|| string_at(value, &["terminal_title_stripped"]))
-            .unwrap_or_else(|| display_agent.clone());
-        let status = string_at(value, &["agent_status"])
-            .as_deref()
-            .map_or(AgentStatus::Unknown, AgentStatus::from);
-        let focused = value
-            .get("focused")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+            let Some(workspace_id) = string_at(value, &["workspace_id"]).map(WorkspaceId::from)
+            else {
+                continue;
+            };
+            let Some(pane_id) = string_at(value, &["pane_id"]).map(PaneId::from) else {
+                continue;
+            };
+            let tab_id = TabId::from(string_at(value, &["tab_id"]).unwrap_or_default());
+            let display_agent = string_at(value, &["display_agent"])
+                .or_else(|| string_at(value, &["agent"]))
+                .unwrap_or_else(|| "agent".to_string());
+            let label = string_at(value, &["name"])
+                .or_else(|| string_at(value, &["title"]))
+                .or_else(|| string_at(value, &["terminal_title_stripped"]))
+                .unwrap_or_else(|| display_agent.clone());
+            let status = string_at(value, &["agent_status"])
+                .as_deref()
+                .map_or(AgentStatus::Unknown, AgentStatus::from);
+            let focused = value
+                .get("focused")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
-        let group_index = if let Some(index) = group_indexes.get(&workspace_id).copied() {
-            index
-        } else {
-            let index = groups.len();
-            groups.push(WorkspaceGroup {
-                workspace_id: workspace_id.clone(),
-                label: workspace_id.as_str().to_string(),
-                agents: Vec::new(),
+            let group_index = if let Some(index) = group_indexes.get(&workspace_id).copied() {
+                index
+            } else {
+                let index = groups.len();
+                groups.push(WorkspaceGroup {
+                    workspace_id: workspace_id.clone(),
+                    label: workspace_id.as_str().to_string(),
+                    agents: Vec::new(),
+                });
+                group_indexes.insert(workspace_id.clone(), index);
+                index
+            };
+            let workspace_label = groups[group_index].label.clone();
+            groups[group_index].agents.push(AgentRow {
+                workspace_id,
+                workspace_label,
+                tab_id,
+                pane_id,
+                label,
+                agent: display_agent,
+                status,
+                focused,
             });
-            group_indexes.insert(workspace_id.clone(), index);
-            index
-        };
-        let workspace_label = groups[group_index].label.clone();
-        groups[group_index].agents.push(AgentRow {
-            workspace_id,
-            workspace_label,
-            tab_id,
-            pane_id,
-            label,
-            agent: display_agent,
-            status,
-            focused,
-        });
-    }
+        }
 
         groups.retain(|group| !group.agents.is_empty());
         for group in &mut groups {
