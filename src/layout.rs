@@ -1,4 +1,4 @@
-use crate::config::{ProjectConfig, load_project_config};
+use crate::config::{EnvConfig, ProjectConfig, load_project_config};
 use crate::git::{git_branch, git_parent_branch};
 use crate::herdr::{CreatedWorkspace, HerdrClient, Method};
 use crate::ids::{PaneId, TabId, WorkspaceId};
@@ -26,7 +26,7 @@ pub(crate) fn apply_layout() -> Result<()> {
         &source.cwd,
         &config,
         None,
-        false,
+        None,
     )?;
 
     println!(
@@ -52,7 +52,7 @@ pub(crate) fn apply_scatterer_layout(
     cwd: &Path,
     config: &ProjectConfig,
     parent_branch_hint: Option<&str>,
-    defer_agent_start: bool,
+    agent_ready: Option<&Path>,
 ) -> Result<AppliedLayout> {
     let cwd_string = cwd.to_string_lossy().to_string();
     let agent = config.layout.agent.as_deref().unwrap_or(
@@ -68,20 +68,19 @@ pub(crate) fn apply_scatterer_layout(
     let runner = optional_command(config.layout.runner.as_deref());
     let git = optional_command(config.layout.git.as_deref());
 
-    let load_direnv = config.env.direnv_enabled();
-    let agent_pane = if defer_agent_start {
-        // Start an interactive shell first. Herdr's agent.start facade then
-        // validates that Pi becomes ready in this exact pane before prompting.
-        pane("pi", &cwd_string, "true", load_direnv)
-    } else {
-        pane("pi", &cwd_string, agent, load_direnv)
-    };
+    let agent_pane = pane(
+        "pi",
+        &cwd_string,
+        if agent_ready.is_some() { "true" } else { agent },
+        &config.env,
+        agent_ready,
+    )?;
     let dev_root = json!({
         "type": "split",
         "direction": "right",
         "ratio": 0.58,
         "first": agent_pane,
-        "second": pane("hunk", &cwd_string, hunk, load_direnv),
+        "second": pane("hunk", &cwd_string, hunk, &config.env, None)?,
     });
 
     let agent_layout = apply_tab(
@@ -101,7 +100,7 @@ pub(crate) fn apply_scatterer_layout(
             workspace_id,
             None,
             "runner",
-            pane("runner", &cwd_string, runner, load_direnv),
+            pane("runner", &cwd_string, runner, &config.env, None)?,
             false,
         )?;
     }
@@ -111,7 +110,7 @@ pub(crate) fn apply_scatterer_layout(
             workspace_id,
             None,
             "git",
-            pane("git", &cwd_string, git, load_direnv),
+            pane("git", &cwd_string, git, &config.env, None)?,
             false,
         )?;
     }
@@ -135,13 +134,24 @@ fn workspace_label(cwd: &Path) -> String {
     format!("{name} · scatterer")
 }
 
-fn pane(label: &str, cwd: &str, command: &str, load_direnv: bool) -> Value {
-    json!({
+fn pane(
+    label: &str,
+    cwd: &str,
+    command: &str,
+    env: &EnvConfig,
+    ready: Option<&Path>,
+) -> Result<Value> {
+    let launch_env: std::collections::BTreeMap<_, _> = ready
+        .map(|path| ("PI_HERDR_READY_FILE", path))
+        .into_iter()
+        .collect();
+    Ok(json!({
+        "env": launch_env,
         "type": "pane",
         "label": label,
         "cwd": cwd,
-        "command": pane_env::shell_command(command, load_direnv),
-    })
+        "command": pane_env::shell_command(command, env)?,
+    }))
 }
 
 fn optional_command(command: Option<&str>) -> Option<&str> {
