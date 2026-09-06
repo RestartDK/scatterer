@@ -6,6 +6,7 @@ use crate::config::load_project_config;
 use crate::git::{git_branch, remember_parent_branch, switch_or_create_branch};
 use crate::herdr::{Entrypoint, HerdrClient, Placement};
 use crate::layout::{apply_scatterer_layout, create_workspace};
+use crate::shell_ready::ShellReady;
 use crate::util::slugify;
 use crate::worktree_setup::run_worktree_setup;
 use anyhow::{Context, Result};
@@ -83,6 +84,7 @@ pub(crate) fn open() -> Result<()> {
             Entrypoint::QuickStart,
             Placement::Popup,
             json!({
+                "cwd": source.cwd.to_string_lossy(),
                 "env": {
                     "SCATTERER_SOURCE_CWD": source.cwd.to_string_lossy(),
                 },
@@ -96,14 +98,36 @@ pub(crate) fn remove_flat_worktree() -> Result<()> {
     worktree::remove_current_flat_worktree()
 }
 
+pub(crate) fn models() -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let (config, _) = load_project_config(&cwd)?;
+    for model in pi::available_pi_models(&cwd, &config.env)? {
+        println!("{model}");
+    }
+    Ok(())
+}
+
 pub(crate) fn run() -> Result<()> {
-    let Some(form) = tui::run_quick_start_tui()? else {
+    let client = HerdrClient::from_env()?;
+    let source = client.invocation_source()?;
+    let (config, _) = load_project_config(&source.cwd)?;
+    eprintln!(
+        "Preparing {} and discovering Pi models. Ctrl+C cancels.",
+        source.cwd.display()
+    );
+    let models = match pi::available_pi_models(&source.cwd, &config.env) {
+        Ok(models) => models,
+        Err(error) => {
+            eprintln!("{error:#}\nPress Enter to close and retry after fixing the environment.");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            return Err(error);
+        }
+    };
+    let Some(form) = tui::run_quick_start_tui(models)? else {
         println!("scatterer: quick start cancelled");
         return Ok(());
     };
-
-    let client = HerdrClient::from_env()?;
-    let source = client.invocation_source()?;
 
     match form.target {
         QuickStartTarget::Workspace => run_workspace_quick_start(&client, &source.cwd, form),
@@ -133,6 +157,7 @@ fn run_workspace_quick_start(
         .clone()
         .or_else(|| git_branch(source_cwd))
         .unwrap_or_else(|| quick_start_name(&form.prompt));
+    let ready = ShellReady::new()?;
     let layout = apply_scatterer_layout(
         client,
         &created.workspace_id,
@@ -140,8 +165,9 @@ fn run_workspace_quick_start(
         source_cwd,
         &config,
         requested_base.as_deref(),
-        true,
+        Some(&ready.path()),
     )?;
+    ready.wait()?;
     pi::start_pi_agent(
         client,
         &layout.agent_pane_id,
@@ -187,6 +213,7 @@ fn run_worktree_quick_start(
         remember_parent_branch(&created.path, &branch, parent)?;
     }
     run_worktree_setup(source_cwd, &created.path, &config)?;
+    let ready = ShellReady::new()?;
     let layout = apply_scatterer_layout(
         client,
         &created.workspace_id,
@@ -194,8 +221,9 @@ fn run_worktree_quick_start(
         &created.path,
         &config,
         base.as_deref(),
-        true,
+        Some(&ready.path()),
     )?;
+    ready.wait()?;
     pi::start_pi_agent(
         client,
         &layout.agent_pane_id,

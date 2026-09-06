@@ -1,4 +1,3 @@
-use super::pi::available_pi_models;
 use super::worktree::default_branch_for_prompt;
 use super::{Harness, QuickStartForm, QuickStartTarget};
 use crate::terminal_session::TerminalSession;
@@ -50,7 +49,7 @@ struct QuickStartApp {
 }
 
 impl QuickStartApp {
-    fn new() -> Self {
+    fn new(models: Vec<String>) -> Self {
         Self {
             palette: PickerPalette::load(),
             prompt: String::new(),
@@ -60,7 +59,7 @@ impl QuickStartApp {
             base: String::new(),
             target: QuickStartTarget::Workspace,
             harness: Harness::Pi,
-            models: available_pi_models(),
+            models,
             model_index: 0,
             field: QuickField::Prompt,
             error: None,
@@ -68,13 +67,13 @@ impl QuickStartApp {
     }
 }
 
-pub(super) fn run_quick_start_tui() -> Result<Option<QuickStartForm>> {
+pub(super) fn run_quick_start_tui(models: Vec<String>) -> Result<Option<QuickStartForm>> {
     let mut session = TerminalSession::enter(true)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
     terminal.clear().context("failed to clear terminal")?;
 
-    let result = run_quick_start_loop(&mut terminal);
+    let result = run_quick_start_loop(&mut terminal, models);
     terminal.show_cursor().ok();
     drop(terminal);
     let cleanup = session.finish();
@@ -86,8 +85,9 @@ pub(super) fn run_quick_start_tui() -> Result<Option<QuickStartForm>> {
 
 fn run_quick_start_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    models: Vec<String>,
 ) -> Result<Option<QuickStartForm>> {
-    let mut app = QuickStartApp::new();
+    let mut app = QuickStartApp::new(models);
     loop {
         terminal
             .draw(|frame| draw_quick_start(frame, &mut app))
