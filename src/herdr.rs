@@ -472,7 +472,7 @@ impl HerdrClient {
                 Method::PaneRead,
                 json!({
                     "pane_id": pane_id,
-                    "source": "recent-unwrapped",
+                    "source": "recent_unwrapped",
                     "lines": lines,
                 }),
             )
