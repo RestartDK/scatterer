@@ -82,14 +82,28 @@ checkout safely and close its workspace; the branch is retained. Dirty
 worktrees are refused. Avoid Herdr's `Open worktree` action if you do not want a
 top-level checkout grouped again.
 
-Layout pane commands import `direnv export bash` before starting so tools like Pi,
-hunk, and any project-configured runner/git commands inherit the workspace's
-allowed `.envrc`.
-If lorri has not finished evaluating yet, Scatterer waits and retries briefly
-before launching panes. If direnv still fails, Scatterer continues without that
-environment and disables direnv hooks in the fallback shell so the same `.envrc`
-error does not repeat. Set `[env] direnv = false` in Scatterer config to disable
-direnv per project.
+Model discovery and layout commands use the same environment launcher in the
+source or target checkout. The default is `repo-exec`, supplied by Daniel's
+dotfiles. It initializes the configured shell and runs registered environment
+preparation hooks before launching a command. No `.envrc` is required. A configured
+environment that fails to load stops the launch instead of silently losing tools
+or credentials. `scatterer models` runs the same model discovery path without
+opening the picker.
+
+Set `[env] launcher = ["program", "argument"]` to use another launcher. Its contract
+is to prepare the environment, execute the appended command and arguments only
+on success, and preserve stdout for the command. Preparation diagnostics go to
+stderr. The legacy `env.direnv` option is rejected; replace it with `env.launcher`.
+Scatterer does not cache or copy credentials into the Herdr server.
+
+Quick Start also requires the shell preparation acknowledgement used by
+`repo-env.zsh` in Daniel's dotfiles. It passes a private result-file path through
+`PI_HERDR_READY_FILE` to the new agent shell. The shell writes its preparation
+exit status after initialization and before accepting commands. Scatterer waits
+up to two minutes for success before calling `agent.start`. Failure or timeout
+stops startup with an error. The file contains only an exit status and is removed
+when the operation ends. Namespace preparation belongs to the launcher and shell
+configuration, not to a timer in Scatterer.
 
 Scatterer starts Pi in the layout's shell pane with Herdr's `agent.start` API,
 passing `--name "<branch-or-session>"` and an optional `--model`. It then uses
@@ -369,9 +383,7 @@ Use `.scatterer.toml` for project config you are comfortable committing. Use
 
 ```toml
 [env]
-# Defaults to true. When enabled, Scatterer-created panes run
-# `direnv export bash` before launching pi/hunk and any configured tabs.
-direnv = true
+launcher = ["repo-exec"]
 
 [layout]
 agent = "pi"

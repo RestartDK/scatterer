@@ -1,10 +1,13 @@
 use super::{QuickStartForm, quick_start_name};
+use crate::config::EnvConfig;
 use crate::herdr::{HerdrClient, Method};
 use crate::ids::{PaneId, WorkspaceId};
+use crate::pane_env;
 use crate::util::slugify;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::json;
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Stdio;
 
 pub(super) fn start_pi_agent(
     client: &HerdrClient,
@@ -68,39 +71,64 @@ fn herdr_agent_name(session_name: &str, workspace_id: &WorkspaceId) -> String {
         .collect()
 }
 
-pub(super) fn available_pi_models() -> Vec<String> {
-    let output = Command::new("pi")
-        .arg("--list-models")
+pub(super) fn available_pi_models(cwd: &Path, env: &EnvConfig) -> Result<Vec<String>> {
+    let output = pane_env::command(cwd, env)?
+        .args(["pi", "--list-models"])
         .stdin(Stdio::null())
-        .output();
-
-    let mut models = vec!["default".to_string()];
-    let Ok(output) = output else {
-        return models;
-    };
+        .stderr(Stdio::inherit())
+        .output()
+        .context("failed to start environment launcher for Pi model discovery")?;
     if !output.status.success() {
-        return models;
+        bail!(
+            "Pi model discovery failed ({}) in {}; fix environment preparation and retry",
+            output.status,
+            cwd.display()
+        );
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut models = vec!["default".to_string()];
+    let stdout = String::from_utf8(output.stdout).context("Pi returned non-UTF-8 model output")?;
     for line in stdout.lines().skip(1) {
         let mut parts = line.split_whitespace();
-        let Some(provider) = parts.next() else {
-            continue;
-        };
-        let Some(model) = parts.next() else {
-            continue;
-        };
-        models.push(format!("{provider}/{model}"));
+        if let (Some(provider), Some(model)) = (parts.next(), parts.next()) {
+            models.push(format!("{provider}/{model}"));
+        }
     }
     models.sort();
     models.dedup();
-    models
+    Ok(models)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_uses_target_directory_and_launcher_environment() {
+        let cwd = std::env::temp_dir();
+        let env = EnvConfig {
+            launcher: Some(vec![
+                "sh".into(),
+                "-c".into(),
+                "test \"$PWD\" -ef \"$1\" && printf 'provider model\\nfixture authenticated\\n'"
+                    .into(),
+                "test-launcher".into(),
+                cwd.to_string_lossy().into_owned(),
+            ]),
+        };
+        assert_eq!(
+            available_pi_models(&cwd, &env).unwrap(),
+            ["default", "fixture/authenticated"]
+        );
+    }
+
+    #[test]
+    fn discovery_failure_is_not_an_empty_model_list() {
+        let env = EnvConfig {
+            launcher: Some(vec!["false".into()]),
+        };
+        assert!(available_pi_models(Path::new("."), &env).is_err());
+    }
 
     #[test]
     fn herdr_agent_names_are_strict_and_bounded() {

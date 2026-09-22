@@ -13,6 +13,7 @@ mod pane_env;
 mod pr_picker;
 mod quick_start;
 mod review;
+mod shell_ready;
 mod terminal_session;
 mod theme;
 mod util;
@@ -29,6 +30,7 @@ enum Command {
     Appearance(Vec<String>),
     OpenQuickStart,
     QuickStart,
+    Models,
     RemoveFlatWorktree,
     OpenPrPicker,
     PrPicker,
@@ -42,7 +44,7 @@ enum Command {
 }
 
 impl Command {
-    const USAGE: &'static str = "scatterer apply-layout | appearance <sync|watch|install-launchd|uninstall-launchd> | open-quick-start | quick-start | remove-flat-worktree | open-pr-picker | pr-picker | open-agent-picker | agent-picker | open-lazygit | lazygit | toggle-review | review | nav <left|down|up|right>";
+    const USAGE: &'static str = "scatterer apply-layout | appearance <sync|watch|install-launchd|uninstall-launchd> | open-quick-start | quick-start | models | remove-flat-worktree | open-pr-picker | pr-picker | open-agent-picker | agent-picker | open-lazygit | lazygit | toggle-review | review | nav <left|down|up|right>";
 
     fn parse(mut args: impl Iterator<Item = String>) -> Result<Self> {
         let Some(name) = args.next() else {
@@ -55,6 +57,7 @@ impl Command {
             "appearance-watch" => Self::Appearance(vec!["watch".to_string()]),
             "open-quick-start" => Self::OpenQuickStart,
             "quick-start" => Self::QuickStart,
+            "models" => Self::Models,
             "remove-flat-worktree" => Self::RemoveFlatWorktree,
             "open-pr-picker" => Self::OpenPrPicker,
             "pr-picker" => Self::PrPicker,
@@ -94,6 +97,7 @@ fn main() -> Result<()> {
         Command::Appearance(args) => appearance::run(args.into_iter()),
         Command::OpenQuickStart => quick_start::open(),
         Command::QuickStart => quick_start::run(),
+        Command::Models => quick_start::models(),
         Command::RemoveFlatWorktree => quick_start::remove_flat_worktree(),
         Command::OpenPrPicker => pr_picker::open(),
         Command::PrPicker => pr_picker::run(),

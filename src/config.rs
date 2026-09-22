@@ -27,15 +27,18 @@ pub(crate) struct LayoutConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct EnvConfig {
-    /// Whether Scatterer-created panes should import `direnv export bash` before
-    /// launching their command. Defaults to true.
-    pub(crate) direnv: Option<bool>,
+    pub(crate) launcher: Option<Vec<String>>,
 }
 
 impl EnvConfig {
-    pub(crate) fn direnv_enabled(&self) -> bool {
-        self.direnv.unwrap_or(true)
+    pub(crate) fn launcher(&self) -> Result<(&str, &[String])> {
+        match self.launcher.as_deref() {
+            None => Ok(("repo-exec", &[])),
+            Some([program, args @ ..]) if !program.trim().is_empty() => Ok((program, args)),
+            Some(_) => anyhow::bail!("env.launcher must contain an executable"),
+        }
     }
 }
 
@@ -94,7 +97,7 @@ impl Merge for LayoutConfig {
 
 impl Merge for EnvConfig {
     fn merge(&mut self, next: EnvConfig) {
-        self.direnv.merge(next.direnv);
+        self.launcher.merge(next.launcher);
     }
 }
 
