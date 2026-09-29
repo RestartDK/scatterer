@@ -8,8 +8,8 @@ The `daniel.scatterer.apply-layout` action creates a new Herdr workspace/space
 from the currently focused pane's cwd, then uses Herdr's declarative
 `layout.apply` socket API to make an `agent` tab with `pi` on the left and
 `hunk diff <parent-branch>... --watch` on the right. The parent branch comes
-from the quick-start base ref or saved Scatterer branch metadata when present,
-then falls back to the current GitHub PR base, then `main`.
+from saved Scatterer branch metadata when present, then falls back to the
+current GitHub PR base, then `main`.
 
 Repeated invocations create another workspace/space. It does not append tabs to
 the workspace you invoked it from. Project config can override the Hunk command
@@ -22,79 +22,23 @@ dark theme, but not a matching Tokyo Night Day theme. Herdr itself supports
 `name = "terminal"` or `dark_name = "tokyo-night"` / `light_name =
 "tokyo-night-day"` in `~/.config/herdr/config.toml`.
 
-## Scatterer popup theming
+## Agent picker theming
 
-Scatterer's agent picker, PR picker, and quick-start popup share one theme
-module. It reads Herdr's `[theme]` configuration, mirrors every built-in Herdr
+The agent picker reads Herdr's `[theme]` configuration, mirrors every built-in Herdr
 palette, applies `[theme.custom]` overrides, and follows `auto_switch` on macOS.
 Selection backgrounds, borders, text, muted labels, and semantic status colors
 therefore match the active Herdr theme instead of using fixed ANSI colors.
 External applications such as Hunk and lazygit continue to manage their own
 themes.
 
-## Quick start
+## Layout execution
 
-The `daniel.scatterer.quick-start` action opens a Herdr popup TUI. Optionally
-enter a multi-line Pi prompt, choose one of three workspace modes, optionally
-enter a branch name and base ref, choose a Pi model from `pi --list-models`, and
-submit with `Enter`. Use `Shift+Enter` or `Ctrl+J` to add prompt lines. The
-modes are:
-
-- `workspace (current checkout)` — opens another workspace for the current
-  checkout, optionally switching or creating its branch first
-- `worktree (Herdr group, indented)` — keeps Herdr's normal managed worktree
-  behavior and displays the new workspace under the source repository
-- `worktree (top-level space, not indented)` — creates the same Git worktree in
-  Herdr's configured worktree directory, but reopens it as an ordinary top-level
-  workspace without Herdr grouping provenance
-
-Use Left/Right or Space while the `Mode` field is active to change the behavior
-for that quick-start invocation.
-
-In `workspace` mode, an empty branch keeps the current branch; entering a branch
-switches to it or creates it before opening the workspace. If the branch is new,
-an optional base ref creates it from that ref instead of the current `HEAD`. In
-either worktree mode, an empty branch uses `daniel/<prompt-slug>`, so either a
-prompt or branch is required. An optional base ref is passed to Herdr when
-creating the worktree; blank uses the source checkout's current ref. For stacked
-PRs, enter the child PR branch in `Branch` and the parent PR branch in `Base
-ref`. The branch name is also used as the worktree workspace name; when Scatterer
-starts Pi explicitly for a prompt/model selection, it uses the branch or current
-workspace name as the Pi session name. Scatterer then:
-
-1. creates a Herdr workspace, or creates a Git worktree and opens either a
-   grouped or top-level workspace for it
-2. for new worktrees only, runs project worktree setup from merged Scatterer
-   config, `.herdr/setup.json`, and executable `.herdr/setup-worktree.sh` /
-   `.herdr/post-worktree-create.sh` hooks when present
-3. applies the Scatterer layout in the workspace
-4. starts Pi through Herdr's live-agent facade, waits for it to become ready,
-   and atomically submits the entered multiline prompt when present
-
-For top-level mode, Scatterer lets Herdr create the checkout first so the path
-still honors `[worktrees].directory` (for example
-`~/.herdr/worktrees/<repo>/<branch-slug>`). It then calls `workspace.close` on
-the temporary grouped workspace—this does not remove the checkout—and opens the
-same path with `workspace.create`. The final workspace is a real Git worktree but
-is not indented. Scatterer records these checkouts in its Herdr plugin state.
-Invoke `daniel.scatterer.remove-flat-worktree` from inside one to remove a clean
-checkout safely and close its workspace; the branch is retained. Dirty
-worktrees are refused. Avoid Herdr's `Open worktree` action if you do not want a
-top-level checkout grouped again.
-
-Layout pane commands import `direnv export bash` before starting so tools like Pi,
-hunk, and any project-configured runner/git commands inherit the workspace's
-allowed `.envrc`.
+Layout pane commands import `direnv export bash` before starting so tools like
+Pi, Hunk, and project runner commands inherit the workspace's allowed `.envrc`.
 If lorri has not finished evaluating yet, Scatterer waits and retries briefly
 before launching panes. If direnv still fails, Scatterer continues without that
-environment and disables direnv hooks in the fallback shell so the same `.envrc`
-error does not repeat. Set `[env] direnv = false` in Scatterer config to disable
-direnv per project.
-
-Scatterer starts Pi in the layout's shell pane with Herdr's `agent.start` API,
-passing `--name "<branch-or-session>"` and an optional `--model`. It then uses
-`agent.prompt` for the initial message, avoiding shell quoting and preserving
-multiline text atomically.
+environment and disables direnv hooks in the fallback shell. Set
+`[env] direnv = false` in Scatterer config to disable direnv per project.
 
 ## Lazygit overlay
 
@@ -154,32 +98,18 @@ For seamless split-edge handoff, Neovim still needs a small Lua keymap that trie
 `wincmd h/j/k/l` first and calls `herdr pane focus --direction ... --current`
 when the current Neovim window does not change.
 
-## PR picker
+## Workspace PR status
 
-The `daniel.scatterer.pr-picker` action opens a compact Herdr popup and lists
-PRs attached to active Herdr agents. It scans active agents, finds their
-current worktree/branch, resolves the matching GitHub PR with `gh`, and shows:
+Scatterer reports `repo` and one PR badge per workspace when Herdr starts or
+the workspace is created or focused. The Space sidebar can show `pr_open`,
+`pr_draft`, `pr_merged`, or `pr_closed` with the PR number, state icon, and state.
+Open and draft PRs also report `pr_additions` and `pr_deletions` (`+798` and
+`-74`); configure those as separate green and red sidebar tokens. For top-level
+worktrees, Scatterer gets the repo name from Git's common directory.
 
-- Nerd Font PR state icon: open, draft, merged, or closed
-- PR number, title, review decision, CI state, comments, files, and lines changed
-- selected-PR details with associated agent, agent status, branch, and URL
-
-Controls:
-
-```txt
-↑/↓ or j/k   select
-Enter        focus the associated workspace/agent
-o            open PR in browser, or copy the URL via terminal clipboard over SSH
-r            refresh
-y            copy PR URL
-q/Esc        close
-```
-
-Refreshing the picker reports `pr_url`, `pr_number`, and `pr_state` pane
-metadata. It also reports exactly one styled-sidebar badge token for the current
-state: `pr_open`, `pr_draft`, `pr_merged`, or `pr_closed`. Each badge displays
-the PR number, Nerd Font state icon, and state inside the normal Herdr Agents
-view; Scatterer does not replace or filter that view.
+PR state is not polled while a workspace stays focused. Run
+`herdr plugin action invoke daniel.scatterer.refresh-spaces` to refresh all
+workspaces without switching focus.
 
 ## Agent session picker
 
@@ -239,9 +169,9 @@ nix build   # ./result/bin/scatterer
 ```
 
 `packages.plugin` is a ready-to-link Herdr plugin root. Its manifest is
-rewritten as data for the immutable store: every action/pane command invokes
-the built binary directly (no `bash scripts/scatterer.sh` launcher, no cargo
-build hook — those only serve development checkouts):
+rewritten as data for the immutable store: action, pane, startup, and event
+commands invoke the built binary directly. The development launcher and cargo
+build hook are omitted:
 
 ```sh
 nix build .#plugin
@@ -265,10 +195,7 @@ nix develop   # or `direnv allow` once
 cargo test --locked
 herdr plugin link .
 herdr plugin action invoke daniel.scatterer.apply-layout
-herdr plugin action invoke daniel.scatterer.quick-start
-herdr plugin action invoke daniel.scatterer.pr-picker
 herdr plugin action invoke daniel.scatterer.agent-picker
-herdr plugin action invoke daniel.scatterer.remove-flat-worktree
 herdr plugin action invoke daniel.scatterer.lazygit
 herdr plugin action invoke daniel.scatterer.review-toggle
 herdr plugin action invoke daniel.scatterer.appearance-sync
@@ -291,18 +218,6 @@ key = "prefix+shift+s"
 type = "plugin_action"
 command = "daniel.scatterer.apply-layout"
 description = "scatterer layout"
-
-[[keys.command]]
-key = "prefix+shift+a"
-type = "plugin_action"
-command = "daniel.scatterer.quick-start"
-description = "scatterer quick start"
-
-[[keys.command]]
-key = "prefix+shift+p"
-type = "plugin_action"
-command = "daniel.scatterer.pr-picker"
-description = "scatterer PR picker"
 
 [[keys.command]]
 key = "prefix+g"
@@ -348,8 +263,7 @@ description = "navigate right (vim/herdr)"
 ```
 
 With Daniel's current `prefix = "ctrl+x"`, these are `ctrl+x` then `shift+s`
-for layout, `ctrl+x` then `shift+a` for quick start, `ctrl+x` then `shift+p`
-for PR picker, `ctrl+x` then `g` for the agent session picker, `ctrl+x` then
+for layout, `ctrl+x` then `g` for the agent session picker, `ctrl+x` then
 `shift+g` for lazygit, and `ctrl+x` then `u` to toggle Review. The navigation bindings
 are direct `ctrl+h/j/k/l` chords, which shadow shell readline defaults such as
 `ctrl+l` clear-screen and `ctrl+k` kill-line.
@@ -380,14 +294,6 @@ agent = "pi"
 # Optional per-project tabs. Defaults do not include process-compose or lazygit.
 runner = "process-compose up"
 git = "lazygit"
-
-[quick_start.setup]
-# Shell commands run in each new quick-start worktree before the layout is
-# applied. Commands from multiple config files are appended in merge order.
-commands = [
-  "touch .lorri-off",
-  "direnv allow",
-]
 ```
 
 Set `runner` only in projects that need a runner tab, for example:
@@ -395,30 +301,4 @@ Set `runner` only in projects that need a runner tab, for example:
 ```toml
 [layout]
 runner = "npm run dev"
-```
-
-Quick-start also supports setup files and executable hooks alongside config
-commands:
-
-```txt
-.herdr/setup.json
-.herdr/setup-worktree.sh
-.herdr/post-worktree-create.sh
-```
-
-Scatterer checks both the source checkout and the newly-created worktree, so
-local-only setup in your source checkout still runs even when the worktree has a
-tracked `.herdr` directory. Identical tracked files are skipped to avoid running
-the same setup twice.
-
-These can be local-only too. For personal Cobb-style setup, keep the files in
-your checkout and ignore them locally:
-
-```sh
-cat >> .git/info/exclude <<'EOF'
-.scatterer.local.toml
-.herdr/setup.json
-.herdr/setup-worktree.sh
-.herdr/post-worktree-create.sh
-EOF
 ```

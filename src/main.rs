@@ -10,13 +10,11 @@ mod layout;
 mod lazygit;
 mod nav;
 mod pane_env;
-mod pr_picker;
-mod quick_start;
 mod review;
+mod space_status;
 mod terminal_session;
 mod theme;
 mod util;
-mod worktree_setup;
 
 use nav::Direction;
 
@@ -27,11 +25,8 @@ use nav::Direction;
 enum Command {
     ApplyLayout,
     Appearance(Vec<String>),
-    OpenQuickStart,
-    QuickStart,
-    RemoveFlatWorktree,
-    OpenPrPicker,
-    PrPicker,
+    RefreshSpaces,
+    RefreshSpace,
     OpenAgentPicker,
     AgentPicker,
     OpenLazygit,
@@ -42,7 +37,7 @@ enum Command {
 }
 
 impl Command {
-    const USAGE: &'static str = "scatterer apply-layout | appearance <sync|watch|install-launchd|uninstall-launchd> | open-quick-start | quick-start | remove-flat-worktree | open-pr-picker | pr-picker | open-agent-picker | agent-picker | open-lazygit | lazygit | toggle-review | review | nav <left|down|up|right>";
+    const USAGE: &'static str = "scatterer apply-layout | appearance <sync|watch|install-launchd|uninstall-launchd> | refresh-spaces | refresh-space | open-agent-picker | agent-picker | open-lazygit | lazygit | toggle-review | review | nav <left|down|up|right>";
 
     fn parse(mut args: impl Iterator<Item = String>) -> Result<Self> {
         let Some(name) = args.next() else {
@@ -53,11 +48,8 @@ impl Command {
             "appearance" => Self::Appearance(args.by_ref().collect()),
             "appearance-sync" => Self::Appearance(vec!["sync".to_string()]),
             "appearance-watch" => Self::Appearance(vec!["watch".to_string()]),
-            "open-quick-start" => Self::OpenQuickStart,
-            "quick-start" => Self::QuickStart,
-            "remove-flat-worktree" => Self::RemoveFlatWorktree,
-            "open-pr-picker" => Self::OpenPrPicker,
-            "pr-picker" => Self::PrPicker,
+            "refresh-spaces" => Self::RefreshSpaces,
+            "refresh-space" => Self::RefreshSpace,
             "open-agent-picker" => Self::OpenAgentPicker,
             "agent-picker" => Self::AgentPicker,
             "open-lazygit" => Self::OpenLazygit,
@@ -92,11 +84,8 @@ fn main() -> Result<()> {
     match Command::parse(std::env::args().skip(1))? {
         Command::ApplyLayout => layout::apply_layout(),
         Command::Appearance(args) => appearance::run(args.into_iter()),
-        Command::OpenQuickStart => quick_start::open(),
-        Command::QuickStart => quick_start::run(),
-        Command::RemoveFlatWorktree => quick_start::remove_flat_worktree(),
-        Command::OpenPrPicker => pr_picker::open(),
-        Command::PrPicker => pr_picker::run(),
+        Command::RefreshSpaces => space_status::refresh_spaces(),
+        Command::RefreshSpace => space_status::refresh_space(),
         Command::OpenAgentPicker => agent_picker::open(),
         Command::AgentPicker => agent_picker::run(),
         Command::OpenLazygit => lazygit::open(),

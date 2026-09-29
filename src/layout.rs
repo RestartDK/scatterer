@@ -8,11 +8,6 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
 
-#[derive(Debug)]
-pub(crate) struct AppliedLayout {
-    pub(crate) agent_pane_id: PaneId,
-}
-
 pub(crate) fn apply_layout() -> Result<()> {
     let client = HerdrClient::from_env()?;
     let source = client.invocation_source()?;
@@ -25,8 +20,6 @@ pub(crate) fn apply_layout() -> Result<()> {
         Some(&created.initial_tab_id),
         &source.cwd,
         &config,
-        None,
-        false,
     )?;
 
     println!(
@@ -51,9 +44,7 @@ pub(crate) fn apply_scatterer_layout(
     replace_tab_id: Option<&TabId>,
     cwd: &Path,
     config: &ProjectConfig,
-    parent_branch_hint: Option<&str>,
-    defer_agent_start: bool,
-) -> Result<AppliedLayout> {
+) -> Result<()> {
     let cwd_string = cwd.to_string_lossy().to_string();
     let agent = config.layout.agent.as_deref().unwrap_or(
         "if command -v pi >/dev/null 2>&1; then pi; else echo 'pi not found on PATH'; fi",
@@ -62,20 +53,14 @@ pub(crate) fn apply_scatterer_layout(
     let hunk = if let Some(hunk) = config.layout.hunk.as_deref() {
         hunk
     } else {
-        computed_hunk_command = default_hunk_command(cwd, parent_branch_hint);
+        computed_hunk_command = default_hunk_command(cwd);
         computed_hunk_command.as_str()
     };
     let runner = optional_command(config.layout.runner.as_deref());
     let git = optional_command(config.layout.git.as_deref());
 
     let load_direnv = config.env.direnv_enabled();
-    let agent_pane = if defer_agent_start {
-        // Start an interactive shell first. Herdr's agent.start facade then
-        // validates that Pi becomes ready in this exact pane before prompting.
-        pane("pi", &cwd_string, "true", load_direnv)
-    } else {
-        pane("pi", &cwd_string, agent, load_direnv)
-    };
+    let agent_pane = pane("pi", &cwd_string, agent, load_direnv);
     let dev_root = json!({
         "type": "split",
         "direction": "right",
@@ -92,7 +77,7 @@ pub(crate) fn apply_scatterer_layout(
         dev_root,
         true,
     )?;
-    let agent_pane_id = pane_id_with_label(&agent_layout, "pi").ok_or_else(|| {
+    pane_id_with_label(&agent_layout, "pi").ok_or_else(|| {
         anyhow!("layout.apply response did not include the Scatterer agent pane: {agent_layout}")
     })?;
     if let Some(runner) = runner {
@@ -116,7 +101,7 @@ pub(crate) fn apply_scatterer_layout(
         )?;
     }
 
-    Ok(AppliedLayout { agent_pane_id })
+    Ok(())
 }
 
 /// Create a workspace labeled after the current branch (or directory name).
@@ -151,13 +136,8 @@ fn optional_command(command: Option<&str>) -> Option<&str> {
     })
 }
 
-fn default_hunk_command(cwd: &Path, parent_branch_hint: Option<&str>) -> String {
-    let parent_branch = parent_branch_hint
-        .map(str::trim)
-        .filter(|branch| !branch.is_empty())
-        .map(ToString::to_string)
-        .or_else(|| git_parent_branch(cwd))
-        .unwrap_or_else(|| "main".to_string());
+fn default_hunk_command(cwd: &Path) -> String {
+    let parent_branch = git_parent_branch(cwd).unwrap_or_else(|| "main".to_string());
 
     format!(
         "if command -v hunk >/dev/null 2>&1; then hunk diff {}... --watch; else echo 'hunk not found on PATH'; fi",
@@ -215,10 +195,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_hunk_command_uses_parent_hint_with_watch() {
-        let command = default_hunk_command(Path::new("."), Some("parent/branch"));
+    fn default_hunk_command_falls_back_to_main_with_watch() {
+        let command = default_hunk_command(Path::new("__scatterer_nonexistent_repository__"));
 
-        assert!(command.contains("hunk diff 'parent/branch'... --watch"));
+        assert!(command.contains("hunk diff 'main'... --watch"));
     }
 
     #[test]

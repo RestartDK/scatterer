@@ -9,6 +9,17 @@ platforms = ["macos", "linux"]
 command = ["cargo", "build", "--release"]
 platforms = ["macos", "linux"]
 
+[[startup]]
+command = ["bash", "scripts/scatterer.sh", "refresh-spaces"]
+
+[[events]]
+on = "workspace.created"
+command = ["bash", "scripts/scatterer.sh", "refresh-space"]
+
+[[events]]
+on = "workspace.focused"
+command = ["bash", "scripts/scatterer.sh", "refresh-space"]
+
 [[actions]]
 id = "apply-layout"
 title = "Apply Scatterer layout"
@@ -17,18 +28,11 @@ contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "apply-layout"]
 
 [[actions]]
-id = "quick-start"
-title = "Quick start Pi workspace"
-description = "Open a workspace or grouped/top-level worktree, optionally switch/create a branch from a base ref, apply the Scatterer layout, and optionally start Pi with a prompt."
+id = "refresh-spaces"
+title = "Refresh workspace PR status"
+description = "Update repo and PR badges in Herdr Spaces."
 contexts = ["global"]
-command = ["bash", "scripts/scatterer.sh", "open-quick-start"]
-
-[[actions]]
-id = "pr-picker"
-title = "PR picker"
-description = "Show PRs associated with active Herdr agents and focus their workspaces."
-contexts = ["global"]
-command = ["bash", "scripts/scatterer.sh", "open-pr-picker"]
+command = ["bash", "scripts/scatterer.sh", "refresh-spaces"]
 
 [[actions]]
 id = "agent-picker"
@@ -36,13 +40,6 @@ title = "Agent session picker"
 description = "Browse active Herdr agents with a live ANSI terminal preview."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "open-agent-picker"]
-
-[[actions]]
-id = "remove-flat-worktree"
-title = "Remove top-level worktree"
-description = "Remove the current top-level worktree created by Scatterer and close its workspace."
-contexts = ["global"]
-command = ["bash", "scripts/scatterer.sh", "remove-flat-worktree"]
 
 [[actions]]
 id = "lazygit"
@@ -106,22 +103,6 @@ title = "Navigate right (Vim/Herdr)"
 description = "Move right across Vim/Neovim splits and Herdr panes."
 contexts = ["global"]
 command = ["bash", "scripts/scatterer.sh", "nav", "right"]
-
-[[panes]]
-id = "quick-start"
-title = "Quick start"
-placement = "popup"
-width = "85%"
-height = "85%"
-command = ["bash", "scripts/scatterer.sh", "quick-start"]
-
-[[panes]]
-id = "pr-picker"
-title = "PRs"
-placement = "popup"
-width = "85%"
-height = "80%"
-command = ["bash", "scripts/scatterer.sh", "pr-picker"]
 
 [[panes]]
 id = "agent-picker"
