@@ -9,8 +9,6 @@ pub(crate) struct ProjectConfig {
     pub(crate) layout: LayoutConfig,
     #[serde(default)]
     pub(crate) env: EnvConfig,
-    #[serde(default)]
-    pub(crate) quick_start: QuickStartConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -39,21 +37,6 @@ impl EnvConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct QuickStartConfig {
-    #[serde(default)]
-    pub(crate) setup: QuickStartSetupConfig,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct QuickStartSetupConfig {
-    /// Shell commands to run in each newly created quick-start worktree before
-    /// the layout is applied. Commands are merged in config discovery order, so
-    /// local config can add personal setup without replacing project defaults.
-    #[serde(default)]
-    pub(crate) commands: Vec<String>,
-}
-
 /// Layered config merging: later (more local) config wins field by field.
 trait Merge {
     fn merge(&mut self, next: Self);
@@ -68,18 +51,10 @@ impl<T> Merge for Option<T> {
     }
 }
 
-/// Lists accumulate across config layers instead of replacing each other.
-impl<T> Merge for Vec<T> {
-    fn merge(&mut self, mut next: Self) {
-        self.append(&mut next);
-    }
-}
-
 impl Merge for ProjectConfig {
     fn merge(&mut self, next: ProjectConfig) {
         self.layout.merge(next.layout);
         self.env.merge(next.env);
-        self.quick_start.merge(next.quick_start);
     }
 }
 
@@ -95,18 +70,6 @@ impl Merge for LayoutConfig {
 impl Merge for EnvConfig {
     fn merge(&mut self, next: EnvConfig) {
         self.direnv.merge(next.direnv);
-    }
-}
-
-impl Merge for QuickStartConfig {
-    fn merge(&mut self, next: QuickStartConfig) {
-        self.setup.merge(next.setup);
-    }
-}
-
-impl Merge for QuickStartSetupConfig {
-    fn merge(&mut self, next: QuickStartSetupConfig) {
-        self.commands.merge(next.commands);
     }
 }
 

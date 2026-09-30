@@ -16,10 +16,6 @@ pub(crate) struct TerminalSession {
 }
 
 impl TerminalSession {
-    pub(crate) fn enter(keyboard_enhancements: bool) -> Result<Self> {
-        Self::enter_with_mouse(keyboard_enhancements, false)
-    }
-
     pub(crate) fn enter_with_mouse(
         keyboard_enhancements: bool,
         mouse_capture: bool,

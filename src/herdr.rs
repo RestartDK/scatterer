@@ -17,20 +17,16 @@ const DEFAULT_PLUGIN_ID: &str = "daniel.scatterer";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Method {
     WorkspaceCreate,
-    WorkspaceClose,
     WorkspaceFocus,
     WorkspaceList,
-    WorktreeCreate,
+    WorkspaceReportMetadata,
     AgentList,
     AgentFocus,
-    AgentStart,
-    AgentPrompt,
     PaneCurrent,
     PaneList,
     PaneClose,
     PaneRead,
     PaneProcessInfo,
-    PaneReportMetadata,
     PaneSendText,
     LayoutApply,
     NotificationShow,
@@ -41,20 +37,16 @@ impl Method {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::WorkspaceCreate => "workspace.create",
-            Self::WorkspaceClose => "workspace.close",
             Self::WorkspaceFocus => "workspace.focus",
             Self::WorkspaceList => "workspace.list",
-            Self::WorktreeCreate => "worktree.create",
+            Self::WorkspaceReportMetadata => "workspace.report_metadata",
             Self::AgentList => "agent.list",
             Self::AgentFocus => "agent.focus",
-            Self::AgentStart => "agent.start",
-            Self::AgentPrompt => "agent.prompt",
             Self::PaneCurrent => "pane.current",
             Self::PaneList => "pane.list",
             Self::PaneClose => "pane.close",
             Self::PaneRead => "pane.read",
             Self::PaneProcessInfo => "pane.process_info",
-            Self::PaneReportMetadata => "pane.report_metadata",
             Self::PaneSendText => "pane.send_text",
             Self::LayoutApply => "layout.apply",
             Self::NotificationShow => "notification.show",
@@ -72,8 +64,6 @@ impl fmt::Display for Method {
 /// Scatterer plugin entrypoints as declared in `herdr-plugin.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Entrypoint {
-    QuickStart,
-    PrPicker,
     AgentPicker,
     Lazygit,
     Review,
@@ -82,8 +72,6 @@ pub(crate) enum Entrypoint {
 impl Entrypoint {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::QuickStart => "quick-start",
-            Self::PrPicker => "pr-picker",
             Self::AgentPicker => "agent-picker",
             Self::Lazygit => "lazygit",
             Self::Review => "review",
@@ -165,14 +153,6 @@ pub(crate) struct InvocationSource {
 pub(crate) struct CreatedWorkspace {
     pub(crate) workspace_id: WorkspaceId,
     pub(crate) initial_tab_id: TabId,
-}
-
-/// Parsed `worktree.create` response.
-#[derive(Debug)]
-pub(crate) struct CreatedWorktree {
-    pub(crate) workspace_id: WorkspaceId,
-    pub(crate) initial_tab_id: Option<TabId>,
-    pub(crate) path: PathBuf,
 }
 
 /// The Herdr plugin id, honoring the `HERDR_PLUGIN_ID` override.
@@ -298,15 +278,6 @@ impl HerdrClient {
         })
     }
 
-    pub(crate) fn close_workspace(&self, workspace_id: &WorkspaceId) -> Result<()> {
-        self.call(
-            Method::WorkspaceClose,
-            json!({ "workspace_id": workspace_id }),
-        )
-        .with_context(|| format!("failed to close workspace {workspace_id}"))?;
-        Ok(())
-    }
-
     pub(crate) fn list_workspaces(&self) -> Result<Vec<Value>> {
         let result = self
             .call(Method::WorkspaceList, json!({}))
@@ -316,69 +287,6 @@ impl HerdrClient {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default())
-    }
-
-    pub(crate) fn create_worktree(
-        &self,
-        cwd: &Path,
-        branch: &str,
-        base: Option<&str>,
-        label: &str,
-        focus: bool,
-    ) -> Result<CreatedWorktree> {
-        let mut payload = json!({
-            "cwd": cwd.to_string_lossy(),
-            "branch": branch,
-            "label": label,
-            "focus": focus,
-        });
-        if let Some(base) = base.map(str::trim).filter(|base| !base.is_empty()) {
-            payload["base"] = json!(base);
-        }
-
-        let result = self
-            .call(Method::WorktreeCreate, payload)
-            .context("failed to create Git worktree workspace")?;
-
-        let workspace_id = first_string(
-            &result,
-            &[
-                &["workspace", "workspace_id"],
-                &["workspace", "id"],
-                &["workspace_id"],
-            ],
-        )
-        .map(WorkspaceId::from)
-        .ok_or_else(|| {
-            anyhow!("worktree.create response did not include a workspace id: {result}")
-        })?;
-
-        let initial_tab_id = first_string(
-            &result,
-            &[
-                &["tab", "tab_id"],
-                &["tab", "id"],
-                &["root_pane", "tab_id"],
-                &["pane", "tab_id"],
-                &["tab_id"],
-            ],
-        )
-        .map(TabId::from);
-
-        let path = first_string(
-            &result,
-            &[&["worktree", "path"], &["workspace", "cwd"], &["path"]],
-        )
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            anyhow!("worktree.create response did not include a checkout path: {result}")
-        })?;
-
-        Ok(CreatedWorktree {
-            workspace_id,
-            initial_tab_id,
-            path,
-        })
     }
 
     // ---- agents ----
@@ -458,22 +366,6 @@ impl HerdrClient {
                     "source": "visible",
                     "format": "ansi",
                     "strip_ansi": false,
-                }),
-            )
-            .with_context(|| format!("failed to read pane {pane_id}"))?;
-        string_at(&result, &["read", "text"])
-            .ok_or_else(|| anyhow!("pane.read response did not include read.text"))
-    }
-
-    /// Read recent unwrapped pane history as plain text.
-    pub(crate) fn read_pane_recent_text(&self, pane_id: &PaneId, lines: u64) -> Result<String> {
-        let result = self
-            .call(
-                Method::PaneRead,
-                json!({
-                    "pane_id": pane_id,
-                    "source": "recent_unwrapped",
-                    "lines": lines,
                 }),
             )
             .with_context(|| format!("failed to read pane {pane_id}"))?;

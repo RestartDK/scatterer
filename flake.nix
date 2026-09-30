@@ -102,11 +102,14 @@
           # the built binary directly and the cargo build hook is dropped.
           manifest = lib.importTOML ./herdr-plugin.toml;
           storeCommand = command: [ (lib.getExe scatterer) ] ++ lib.drop 2 command;
+          rewriteCommands = map (entry: entry // { command = storeCommand entry.command; });
           storeManifest = (pkgs.formats.toml { }).generate "herdr-plugin.toml" (
             builtins.removeAttrs manifest [ "build" ]
             // {
-              actions = map (action: action // { command = storeCommand action.command; }) manifest.actions;
-              panes = map (pane: pane // { command = storeCommand pane.command; }) manifest.panes;
+              actions = rewriteCommands manifest.actions;
+              panes = rewriteCommands manifest.panes;
+              startup = rewriteCommands manifest.startup;
+              events = rewriteCommands manifest.events;
             }
           );
 
