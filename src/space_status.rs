@@ -155,9 +155,10 @@ fn repo_name(cwd: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn pane_cwd(workspace_id: &str, panes: &[Value]) -> Option<PathBuf> {
-    let belongs =
-        |pane: &Value| pane.get("workspace_id").and_then(Value::as_str) == Some(workspace_id);
+fn pane_cwd(workspace_id: &WorkspaceId, panes: &[Value]) -> Option<PathBuf> {
+    let belongs = |pane: &Value| {
+        pane.get("workspace_id").and_then(Value::as_str) == Some(workspace_id.as_str())
+    };
     let pane = panes
         .iter()
         .find(|pane| belongs(pane) && pane.get("focused").and_then(Value::as_bool) == Some(true))
@@ -221,7 +222,7 @@ fn refresh(target: Option<&WorkspaceId>) -> Result<()> {
             continue;
         }
         let label = string_at(workspace, &["label"]).unwrap_or_default();
-        let cwd = pane_cwd(id.as_str(), &panes)
+        let cwd = pane_cwd(&id, &panes)
             .or_else(|| string_at(workspace, &["worktree", "checkout_path"]).map(PathBuf::from));
         let repo = cwd
             .as_deref()
@@ -260,8 +261,11 @@ mod tests {
             json!({ "workspace_id": "w2", "pane_id": "w2:p1", "focused": true, "cwd": "/other" }),
         ];
 
-        assert_eq!(pane_cwd("w1", &panes), Some(PathBuf::from("/repo/second")));
-        assert_eq!(pane_cwd("w3", &panes), None);
+        assert_eq!(
+            pane_cwd(&WorkspaceId::from("w1"), &panes),
+            Some(PathBuf::from("/repo/second"))
+        );
+        assert_eq!(pane_cwd(&WorkspaceId::from("w3"), &panes), None);
     }
 
     #[test]
@@ -271,7 +275,10 @@ mod tests {
             json!({ "workspace_id": "w1", "pane_id": "w1:p2", "cwd": "/repo/second" }),
         ];
 
-        assert_eq!(pane_cwd("w1", &panes), Some(PathBuf::from("/repo/agent")));
+        assert_eq!(
+            pane_cwd(&WorkspaceId::from("w1"), &panes),
+            Some(PathBuf::from("/repo/agent"))
+        );
     }
 
     #[test]
