@@ -474,6 +474,7 @@ fn pane_id_from_context(context: &Value) -> Option<PaneId> {
     first_string(
         context,
         &[
+            &["focused_pane_id"],
             &["pane_id"],
             &["focused_pane", "pane_id"],
             &["pane", "pane_id"],
@@ -486,6 +487,9 @@ fn cwd_from_context(context: &Value) -> Option<String> {
     first_string(
         context,
         &[
+            &["focused_pane_cwd"],
+            &["workspace_cwd"],
+            &["worktree", "checkout_path"],
             &["focused_pane", "foreground_cwd"],
             &["focused_pane", "cwd"],
             &["pane", "foreground_cwd"],

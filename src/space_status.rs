@@ -155,6 +155,19 @@ fn repo_name(cwd: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn pane_cwd(workspace_id: &WorkspaceId, panes: &[Value]) -> Option<PathBuf> {
+    let belongs = |pane: &Value| {
+        pane.get("workspace_id").and_then(Value::as_str) == Some(workspace_id.as_str())
+    };
+    let pane = panes
+        .iter()
+        .find(|pane| belongs(pane) && pane.get("focused").and_then(Value::as_bool) == Some(true))
+        .or_else(|| panes.iter().find(|pane| belongs(pane)))?;
+    string_at(pane, &["cwd"])
+        .or_else(|| string_at(pane, &["foreground_cwd"]))
+        .map(PathBuf::from)
+}
+
 fn tokens_for(label: &str, repo: Option<&str>, pr: Option<&PrBadge>) -> Map<String, Value> {
     let mut tokens = Map::new();
     tokens.insert(
@@ -209,25 +222,12 @@ fn refresh(target: Option<&WorkspaceId>) -> Result<()> {
             continue;
         }
         let label = string_at(workspace, &["label"]).unwrap_or_default();
-        let cwd = string_at(workspace, &["worktree", "checkout_path"])
-            .map(PathBuf::from)
-            .or_else(|| {
-                panes
-                    .iter()
-                    .find(|pane| {
-                        pane.get("workspace_id").and_then(Value::as_str) == Some(id.as_str())
-                            && pane.get("focused").and_then(Value::as_bool) == Some(true)
-                    })
-                    .or_else(|| {
-                        panes.iter().find(|pane| {
-                            pane.get("workspace_id").and_then(Value::as_str) == Some(id.as_str())
-                        })
-                    })
-                    .and_then(|pane| string_at(pane, &["cwd"]))
-                    .map(PathBuf::from)
-            });
-        let repo = string_at(workspace, &["worktree", "repo_name"])
-            .or_else(|| cwd.as_deref().and_then(repo_name));
+        let cwd = pane_cwd(&id, &panes)
+            .or_else(|| string_at(workspace, &["worktree", "checkout_path"]).map(PathBuf::from));
+        let repo = cwd
+            .as_deref()
+            .and_then(repo_name)
+            .or_else(|| string_at(workspace, &["worktree", "repo_name"]));
         let pr = cwd.as_deref().and_then(PrBadge::for_checkout);
         client
             .call(
@@ -246,6 +246,40 @@ fn refresh(target: Option<&WorkspaceId>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_cwd_prefers_the_focused_pane_and_the_shell_directory() {
+        let panes = vec![
+            json!({ "workspace_id": "w1", "pane_id": "w1:p1", "cwd": "/repo/first" }),
+            json!({
+                "workspace_id": "w1",
+                "pane_id": "w1:p2",
+                "focused": true,
+                "cwd": "/repo/second",
+                "foreground_cwd": "/repo/agent"
+            }),
+            json!({ "workspace_id": "w2", "pane_id": "w2:p1", "focused": true, "cwd": "/other" }),
+        ];
+
+        assert_eq!(
+            pane_cwd(&WorkspaceId::from("w1"), &panes),
+            Some(PathBuf::from("/repo/second"))
+        );
+        assert_eq!(pane_cwd(&WorkspaceId::from("w3"), &panes), None);
+    }
+
+    #[test]
+    fn pane_cwd_falls_back_to_the_first_pane_then_foreground_cwd() {
+        let panes = vec![
+            json!({ "workspace_id": "w1", "pane_id": "w1:p1", "foreground_cwd": "/repo/agent" }),
+            json!({ "workspace_id": "w1", "pane_id": "w1:p2", "cwd": "/repo/second" }),
+        ];
+
+        assert_eq!(
+            pane_cwd(&WorkspaceId::from("w1"), &panes),
+            Some(PathBuf::from("/repo/agent"))
+        );
+    }
 
     #[test]
     fn space_tokens_replace_old_pr_state_and_omit_redundant_repo_name() {
