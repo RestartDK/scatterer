@@ -100,14 +100,19 @@ when the current Neovim window does not change.
 
 ## Workspace PR status
 
-Scatterer reports `repo` and one PR badge per workspace when Herdr starts or
-the workspace is created or focused. The Space sidebar can show `pr_open`,
-`pr_draft`, `pr_merged`, or `pr_closed` with the PR number, state icon, and state.
-Open and draft PRs also report `pr_additions` and `pr_deletions` (`+798` and
-`-74`); configure those as separate green and red sidebar tokens. For top-level
-worktrees, Scatterer gets the repo name from Git's common directory.
+Scatterer reports `repo` and one PR badge per workspace when Herdr starts, when
+the workspace is created or focused, and when a tab or pane is focused. The repo
+name comes from the focused pane's current directory, so it follows a `cd`. The
+workspace worktree is the fallback when a workspace has no pane. The Space
+sidebar can show `pr_open`, `pr_draft`, `pr_merged`, or `pr_closed` with the PR
+number, state icon, and state. Open and draft PRs also report `pr_additions` and
+`pr_deletions` (`+798` and `-74`); configure those as separate green and red
+sidebar tokens. For top-level worktrees, Scatterer gets the repo name from Git's
+common directory.
 
-PR state is not polled while a workspace stays focused. Run
+A `cd` inside the pane you are already in fires no Herdr event, so the repo and
+PR tokens keep their last value until the next focus change. PR state is not
+polled while a workspace stays focused. Run
 `herdr plugin action invoke daniel.scatterer.refresh-spaces` to refresh all
 workspaces without switching focus.
 

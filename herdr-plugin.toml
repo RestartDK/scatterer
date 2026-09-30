@@ -20,6 +20,14 @@ command = ["bash", "scripts/scatterer.sh", "refresh-space"]
 on = "workspace.focused"
 command = ["bash", "scripts/scatterer.sh", "refresh-space"]
 
+[[events]]
+on = "tab.focused"
+command = ["bash", "scripts/scatterer.sh", "refresh-space"]
+
+[[events]]
+on = "pane.focused"
+command = ["bash", "scripts/scatterer.sh", "refresh-space"]
+
 [[actions]]
 id = "apply-layout"
 title = "Apply Scatterer layout"
